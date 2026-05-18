@@ -153,7 +153,6 @@ add_library(supertooth_protocol_core STATIC
     protocol/bredr/bredr_recovery.c protocol/bredr/bredr_recovery.h
     protocol/bredr/bredr_recovery_backend.h
     protocol/bredr/bredr_recovery_btbb.c protocol/bredr/bredr_recovery_btbb.h
-    protocol/bredr/bredr_detect_btbb.c protocol/bredr/bredr_detect_btbb.h
 )
 
 target_link_libraries(supertooth_protocol_core

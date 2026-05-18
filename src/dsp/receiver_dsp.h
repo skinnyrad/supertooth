@@ -12,10 +12,8 @@ void receiver_bredr_process_channel(receiver_bredr_channel_ctx_t *ctx,
                                     const receiver_bredr_block_t *blk);
 int receiver_bredr_rx_cb(hackrf_transfer *transfer);
 
-int receiver_hybrid_setup(receiver_session_t *session);
-void receiver_hybrid_destroy(receiver_session_t *session);
-void receiver_hybrid_process_bredr(receiver_hybrid_bredr_ctx_t *ctx,
-                                   const receiver_bredr_block_t *blk);
+int receiver_hybrid_setup_ble(receiver_session_t *session);
+void receiver_hybrid_destroy_ble(receiver_session_t *session);
 void receiver_hybrid_process_ble(receiver_hybrid_ble_ctx_t *ble,
                                  const receiver_bredr_block_t *blk);
 int receiver_hybrid_cb(hackrf_transfer *transfer);

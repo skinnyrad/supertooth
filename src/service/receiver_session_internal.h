@@ -58,26 +58,6 @@ typedef struct
 
 typedef struct
 {
-    unsigned int ctx_index;
-    unsigned int bredr_channel;
-    nco_crcf nco;
-    firdecim_crcf firdec;
-    cpfskdem demod;
-    float complex mixed[RECEIVER_BREDR_BUFFER_SIZE];
-    float complex decimated[(unsigned int)(RECEIVER_BREDR_BUFFER_SIZE / 10u) + 1u];
-    uint8_t bits[((unsigned int)(RECEIVER_BREDR_BUFFER_SIZE / 10u) + 1u) / 2u];
-    unsigned int block_idx_ring[RECEIVER_BREDR_CHANNEL_RING_SIZE];
-    unsigned int block_write_idx;
-    unsigned int block_read_idx;
-    unsigned int block_count;
-    unsigned long dropped_blocks;
-    pthread_mutex_t queue_mutex;
-    pthread_cond_t queue_cv;
-    struct receiver_session *session;
-} receiver_hybrid_bredr_ctx_t;
-
-typedef struct
-{
     nco_crcf nco;
     firdecim_crcf firdec;
     cpfskdem demod;
@@ -137,16 +117,12 @@ struct receiver_session
 
     receiver_hybrid_config_t hybrid_config;
     receiver_hybrid_callbacks_t hybrid_callbacks;
-    receiver_hybrid_bredr_ctx_t hybrid_bredr_ctx[RECEIVER_BREDR_MAX_CHANNELS];
     receiver_hybrid_ble_ctx_t hybrid_ble_ctx;
-    receiver_bredr_block_t hybrid_block_pool[RECEIVER_BREDR_BLOCK_POOL_SIZE];
     pthread_t *hybrid_worker_threads;
     unsigned int hybrid_worker_count;
     unsigned int hybrid_shutdown_requested;
-    unsigned int hybrid_pool_write_idx;
     unsigned long hybrid_total_packets;
     unsigned long hybrid_dropped_blocks;
-    unsigned long long hybrid_samples_received;
 };
 
 uint32_t receiver_bredr_sample_to_rx_clk_1600(const receiver_session_t *session,
