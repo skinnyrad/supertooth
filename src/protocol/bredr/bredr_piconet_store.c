@@ -12,6 +12,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
+#include <inttypes.h>
 
 /* ---------------------------------------------------------------------------
  * Constants
@@ -324,7 +325,54 @@ void bredr_piconet_store_print(const bredr_piconet_store_t *store)
            store->count, store->count == 1u ? "" : "s");
 
     for (size_t i = 0; i < store->count; i++)
-        bredr_piconet_print(store->entries[i].pnet);
+    {
+        const bredr_piconet_t *pnet = store->entries[i].pnet;
+        if (!pnet)
+            continue;
+
+        printf("  LAP: 0x%06" PRIX32, pnet->lap & 0xFFFFFFu);
+
+        if (pnet->uap_found)
+            printf("  UAP: 0x%02X", pnet->uap);
+        else
+            printf("  UAP: ??");
+
+        if (pnet->clk_known)
+        {
+            printf("  CLK1-6: %02d [state=%d]",
+                   pnet->central_clk_1_6,
+                   pnet->tracking_state);
+        }
+        else
+        {
+            printf("  CLK: unknown [state=%d]", pnet->tracking_state);
+        }
+
+        double first_s = pnet->first_seen * 625.0e-6;
+        double last_s = pnet->last_seen * 625.0e-6;
+        printf("  First: CLK %07" PRIu32 " (~%.3f s)"
+               "  Last: CLK %07" PRIu32 " (~%.3f s)",
+               pnet->first_seen, first_s,
+               pnet->last_seen, last_s);
+
+        printf("  Pkts: %lu", pnet->total_packets);
+
+        if (pnet->combined_rssi_seen)
+            printf("  Combined RSSI: %.1f dBr", pnet->combined_rssi);
+
+        float mr = bredr_piconet_master_rssi(pnet);
+        if (!isnan(mr))
+            printf("  Master RSSI: %.1f dBr", mr);
+
+        for (int j = 1; j <= 7; j++)
+        {
+            float sr = bredr_piconet_slave_rssi(pnet, (uint8_t)j);
+            if (!isnan(sr))
+                printf("  Slave[%d] RSSI: %.1f dBr", j, sr);
+        }
+
+        printf("\n");
+    }
 }
 
 size_t bredr_piconet_store_count(const bredr_piconet_store_t *store)
