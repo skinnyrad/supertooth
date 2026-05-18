@@ -30,7 +30,7 @@ On macOS (Homebrew), the CMake files prioritize `/opt/homebrew` and `/usr/local`
 ### Core dependencies (what they do)
 
 - `liquid-dsp`: DSP primitives used for channelization, filtering, NCO mixing, and GFSK/CPFSK demodulation.
-- `libhackrf`: HackRF device API used by runtime binaries and live examples to configure and stream SDR samples.
+- `libhackrf`: HackRF device API used by runtime binaries to configure and stream SDR samples.
 - `libbtbb`: Bluetooth baseband helpers used for BR/EDR access-code workflows and piconet UAP/clock recovery.
 
 ### Install dependencies
@@ -62,16 +62,9 @@ cmake -S . -B build
 cmake --build build
 ```
 
-To build the examples run:
-
-```bash
-cmake --build build --target examples
-```
-
 Output binaries are in:
 
 - `build/src/` (main executables)
-- `build/examples/` (example tools)
 
 ## Run
 
@@ -131,7 +124,3 @@ src/
 - `src/protocol/bredr/`: BR/EDR framing, measurement, tracking, and recovery support.
 
 For a broader description of the current architecture, see `docs/architecture.md`.
-
-### Examples and tools
-
-- `examples/`: standalone tools for recording, demodulation experiments, BR/EDR scanning/detection, CSV export, and channel utilities.
