@@ -7,7 +7,6 @@
 
 #include "bredr_phy.h"
 #include "bredr_header_codec.h"
-#include "bredr_measurements.h"
 
 #include <string.h>   /* memset, memcpy */
 #include <stddef.h>   /* NULL */
@@ -136,8 +135,8 @@ static int barker_ok(uint64_t window)
 /**
  * @brief Reset the collection portion of a processor back to SEARCHING.
  *
- * Does NOT clear sw_window, bits_seen, max_ac_errors, ac_ring, or ac_ring_head
- * — those run continuously across packet boundaries.
+ * Does NOT clear sw_window, bits_seen, or max_ac_errors — those run
+ * continuously across packet boundaries.
  */
 static void reset_collection(bredr_processor_t *proc)
 {
@@ -251,8 +250,6 @@ bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit)
         /* Access code matched. */
         proc->detected_lap = lap;
         proc->detected_ac_errors = ac_errors;
-        proc->last_packet.rssi = 0.0f;
-
         /* GIAC/LIAC inquiry packets are always ID packets: a shortened access
          * code with no trailer, no header, and no payload.  FHS responses from
          * slaves use the slave's own Device Access Code, not the GIAC/LIAC, so
@@ -424,31 +421,6 @@ bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit)
     /* Reset to SEARCHING for the next packet, then return VALID. */
     reset_collection(proc);
     return BREDR_VALID_PACKET;
-}
-
-bredr_status_t bredr_push_bit_and_samples(bredr_processor_t *proc, uint8_t bit,
-                                          float complex sample_a,
-                                          float complex sample_b)
-{
-    if (!proc)
-        return BREDR_ERROR;
-
-    int was_searching = (proc->state == STATE_SEARCHING);
-
-    /* Feed both IQ samples for this bit into the sliding ring buffer so it
-     * always holds the most recent BREDR_AC_SAMPLES decimated samples. */
-    proc->ac_ring[proc->ac_ring_head] = sample_a;
-    proc->ac_ring_head = (proc->ac_ring_head + 1u) % BREDR_AC_SAMPLES;
-    proc->ac_ring[proc->ac_ring_head] = sample_b;
-    proc->ac_ring_head = (proc->ac_ring_head + 1u) % BREDR_AC_SAMPLES;
-
-    bredr_status_t status = bredr_push_bit(proc, bit);
-
-    /* AC matched on this call (including immediate inquiry packet path). */
-    if (was_searching && status != BREDR_SEARCHING)
-        proc->last_packet.rssi = bredr_compute_rssi_dbr(proc->ac_ring, BREDR_AC_SAMPLES);
-
-    return status;
 }
 
 int bredr_get_packet(bredr_processor_t *proc, bredr_packet_t *out)

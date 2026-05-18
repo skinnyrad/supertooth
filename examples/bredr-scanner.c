@@ -44,7 +44,8 @@
 #include <libhackrf/hackrf.h>
 #include <liquid/liquid.h>
 
-#include "../src/hackrf.h"
+#include "../src/radio/hackrf.h"
+#include "rssi_measurements.h"
 #include "../src/bredr_phy.h"
 #include "../src/bredr_piconet.h"
 #include "../src/bredr_piconet_store.h"
@@ -290,8 +291,7 @@ static int rx_callback(hackrf_transfer *transfer)
         unsigned int raw_sym = cpfskdem_demodulate(g_demod, &g_dec[i]);
         uint8_t bit = (uint8_t)(raw_sym & 1u);
 
-        bredr_status_t s = bredr_push_bit_and_samples(&g_proc, bit,
-                                                      g_dec[i], g_dec[i + 1u]);
+        bredr_status_t s = bredr_push_bit(&g_proc, bit);
         g_total_bits++;
 
         if (s != BREDR_VALID_PACKET)
@@ -332,7 +332,11 @@ static int rx_callback(hackrf_transfer *transfer)
         pkt.rx_clk_ref = abs_raw;
         pkt.rx_clk_1600 = (uint32_t)((double)abs_bit / BITS_PER_RX_TIME_1600_TICK);
 
-        /* RSSI is computed by the processor at AC detection time (pkt.rssi). */
+        unsigned int rssi_start = (unsigned int)(ac_bit_in_block * SYMBOL_STEP);
+        unsigned int rssi_end = rssi_start + BREDR_AC_SAMPLES;
+        if (rssi_end > ndec)
+            rssi_end = ndec;
+        pkt.rssi = receiver_rssi_from_mean_power_range(g_dec, rssi_start, rssi_end, 0.0f);
 
         /* Route into piconet store — creates the piconet on first sight and
          * drives UAP/clock recovery internally via libbtbb. */

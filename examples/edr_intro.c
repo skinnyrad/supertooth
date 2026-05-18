@@ -13,7 +13,8 @@
 #include <libhackrf/hackrf.h>
 #include <liquid/liquid.h>
 
-#include "../src/hackrf.h"
+#include "../src/radio/hackrf.h"
+#include "rssi_measurements.h"
 #include "bredr_phy.h"
 #include "bredr_piconet.h"
 #include "bredr_piconet_store.h"
@@ -665,9 +666,7 @@ static void process_bredr_channel(bredr_channel_ctx_t *ctx)
         unsigned int raw_sym = cpfskdem_demodulate(ctx->demod, &ctx->decimated[i]);
         uint8_t bit = (uint8_t)(raw_sym & 1u);
 
-        bredr_status_t s = bredr_push_bit_and_samples(&ctx->proc, bit,
-                                                      ctx->decimated[i],
-                                                      ctx->decimated[i + 1u]);
+        bredr_status_t s = bredr_push_bit(&ctx->proc, bit);
         local_bits++;
 
         if (s != BREDR_VALID_PACKET)
@@ -694,7 +693,11 @@ static void process_bredr_channel(bredr_channel_ctx_t *ctx)
         pkt.rx_clk_1600 =
             (uint32_t)((double)abs_bit / BITS_PER_RX_CLK1600_TICK);
 
-        /* RSSI is computed by the processor at AC detection time (pkt.rssi). */
+        unsigned int rssi_start = (unsigned int)(ac_bit_in_block * SYMBOL_STEP);
+        unsigned int rssi_end = rssi_start + BREDR_AC_SAMPLES;
+        if (rssi_end > decimated_samples)
+            rssi_end = decimated_samples;
+        pkt.rssi = receiver_rssi_from_mean_power_range(ctx->decimated, rssi_start, rssi_end, 0.0f);
 
         pthread_mutex_lock(&g_packet_mutex);
         bredr_piconet_t *pnet =

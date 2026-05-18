@@ -1,4 +1,5 @@
 #include "receiver_dsp.h"
+#include "rssi_measurements.h"
 
 #include <math.h>
 #include <string.h>
@@ -98,16 +99,11 @@ void receiver_hybrid_process_bredr(receiver_hybrid_bredr_ctx_t *ctx,
     unsigned long long absolute_sample = blk->block_base_sample + (unsigned long long)(detect.offset_bits * 20);
     unsigned long long bit_position = absolute_sample / 20ULL;
     uint32_t clkn = (uint32_t)(bit_position / 312.5);
-    float max_power = 0.0f;
-    for (unsigned int i = (unsigned int)detect.offset_bits * 2u;
-         i < (unsigned int)detect.offset_bits * 2u + 144u && i < decimated_samples; i++)
-    {
-        float power = crealf(ctx->decimated[i]) * crealf(ctx->decimated[i]) +
-                      cimagf(ctx->decimated[i]) * cimagf(ctx->decimated[i]);
-        if (power > max_power)
-            max_power = power;
-    }
-    float rssi_dbr = (max_power > 0.0f) ? 10.0f * log10f(max_power) : 0.0f;
+    unsigned int rssi_start = (unsigned int)detect.offset_bits * 2u;
+    unsigned int rssi_end = rssi_start + 144u;
+    if (rssi_end > decimated_samples)
+        rssi_end = decimated_samples;
+    float rssi_dbr = receiver_rssi_from_mean_power_range(ctx->decimated, rssi_start, rssi_end, 0.0f);
     int ac_errors = detect.ac_errors;
     if (ac_errors < 0)
         ac_errors = 0;
@@ -146,24 +142,20 @@ void receiver_hybrid_process_ble(receiver_hybrid_ble_ctx_t *ble,
         ble->prev_status = status;
         if (status != BLE_VALID_PACKET)
             continue;
-        float max_power = 0.0f;
+        unsigned int rssi_start = 0u;
+        unsigned int rssi_end = 0u;
         if (ble->pkt_start_decimated >= 0)
         {
             long long rel = ble->pkt_start_decimated - (long long)buf_start;
-            unsigned int i_start = (rel < 0) ? 0u : (unsigned int)rel;
-            unsigned int i_end = i + 2u;
-            for (unsigned int j = i_start; j < i_end && j < decimated_samples; j++)
-            {
-                float p = crealf(ble->decimated[j]) * crealf(ble->decimated[j]) +
-                          cimagf(ble->decimated[j]) * cimagf(ble->decimated[j]);
-                if (p > max_power)
-                    max_power = p;
-            }
+            rssi_start = (rel < 0) ? 0u : (unsigned int)rel;
+            rssi_end = i + 2u;
+            if (rssi_end > decimated_samples)
+                rssi_end = decimated_samples;
         }
         ble_packet_t pkt;
         if (ble_get_packet(&ble->ble_proc, &pkt) != 0)
             continue;
-        float rssi_dbr = (max_power > 0.0f) ? 10.0f * log10f(max_power) : 0.0f;
+        float rssi_dbr = receiver_rssi_from_mean_power_range(ble->decimated, rssi_start, rssi_end, 0.0f);
         unsigned long long abs_sample = (buf_start + i) * 10ULL;
         rx_metadata_t meta = receiver_make_metadata(abs_sample,
                                                     2402000000u,

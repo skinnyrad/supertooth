@@ -141,12 +141,12 @@ endif()
 add_library(supertooth_protocol_core STATIC
     models/packet_models.h
     models/rx_metadata.h
+    models/rssi_measurements.c models/rssi_measurements.h
     protocol/ble/ble_codec.c protocol/ble/ble_codec.h
     protocol/ble/ble_framer.c protocol/ble/ble_framer.h
     protocol/ble/ble_phy.c protocol/ble/ble_phy.h
     protocol/ble/bt_assigned_numbers.c protocol/ble/bt_assigned_numbers.h
     protocol/bredr/bredr_header_codec.c protocol/bredr/bredr_header_codec.h
-    protocol/bredr/bredr_measurements.c protocol/bredr/bredr_measurements.h
     protocol/bredr/bredr_phy.c protocol/bredr/bredr_phy.h
     protocol/bredr/bredr_piconet.c protocol/bredr/bredr_piconet.h
     protocol/bredr/bredr_piconet_store.c protocol/bredr/bredr_piconet_store.h

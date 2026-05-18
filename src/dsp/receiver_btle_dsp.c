@@ -1,6 +1,6 @@
 #include "receiver_dsp.h"
+#include "rssi_measurements.h"
 
-#include <math.h>
 #include <stdio.h>
 
 int receiver_btle_rx_cb(hackrf_transfer *transfer)
@@ -51,19 +51,15 @@ int receiver_btle_rx_cb(hackrf_transfer *transfer)
         if (status != BLE_VALID_PACKET)
             continue;
 
-        float max_power = 0.0f;
+        unsigned int i_start = 0u;
+        unsigned int i_end = 0u;
         if (session->pkt_start_abs >= 0)
         {
             long long rel_start = session->pkt_start_abs - (long long)buf_start;
-            unsigned int i_start = (rel_start < 0) ? 0u : (unsigned int)rel_start;
-            unsigned int i_end = (s + 1u) * RECEIVER_BTLE_SAMPLES_PER_SYMBOL;
-            for (unsigned int i = i_start; i < i_end && i < num_complex; i++)
-            {
-                float power = crealf(session->raw[i]) * crealf(session->raw[i]) +
-                              cimagf(session->raw[i]) * cimagf(session->raw[i]);
-                if (power > max_power)
-                    max_power = power;
-            }
+            i_start = (rel_start < 0) ? 0u : (unsigned int)rel_start;
+            i_end = (s + 1u) * RECEIVER_BTLE_SAMPLES_PER_SYMBOL;
+            if (i_end > num_complex)
+                i_end = num_complex;
         }
 
         ble_packet_t pkt;
@@ -74,7 +70,7 @@ int receiver_btle_rx_cb(hackrf_transfer *transfer)
 
         if (session->btle_callbacks.on_packet)
         {
-            float rssi_dbr = (max_power > 0.0f) ? 10.0f * log10f(max_power) : 0.0f;
+            float rssi_dbr = receiver_rssi_from_mean_power_range(session->raw, i_start, i_end, 0.0f);
             unsigned long long abs_sample_index = buf_start + sample_index;
             rx_metadata_t meta =
                 receiver_make_metadata(abs_sample_index,

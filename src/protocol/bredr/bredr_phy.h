@@ -337,21 +337,6 @@ typedef struct
      */
     uint8_t  trailer_bits;
 
-    /* -- AC IQ sample ring buffer ----------------------------------------- */
-
-    /**
-     * Circular buffer of the most recent BREDR_AC_SAMPLES (144) decimated IQ
-     * samples.  Two samples are written per bredr_push_bit_and_samples() call
-     * (one per
-     * bit at 2 samples/bit).  When an access code is detected this buffer
-     * holds exactly the IQ samples that covered the AC, allowing RSSI to be
-     * computed immediately at detection time rather than post-hoc.
-     */
-    float complex ac_ring[BREDR_AC_SAMPLES];
-
-    /** Write index into ac_ring; advances mod BREDR_AC_SAMPLES. */
-    unsigned int  ac_ring_head;
-
     /* -- Last valid packet ------------------------------------------------- */
 
     /** Most recently completed packet; valid when packet_ready != 0. */
@@ -395,23 +380,6 @@ void           bredr_processor_init(bredr_processor_t *proc,
  *          `BREDR_ERROR` on invalid input.
  */
 bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit);
-
-/**
- * @brief Push one demodulated bit plus its two IQ samples into the processor.
- *
- * This is a convenience wrapper around `bredr_push_bit()` for callers that
- * have IQ available and want RSSI computed from the AC sample window.
- *
- * @param proc      Pointer to an initialised processor.  Must not be NULL.
- * @param bit       The demodulated bit value.  Only the LSB is examined.
- * @param sample_a  First of the two decimated IQ samples for this bit.
- * @param sample_b  Second of the two decimated IQ samples for this bit.
- *
- * @return Same status codes as `bredr_push_bit()`.
- */
-bredr_status_t bredr_push_bit_and_samples(bredr_processor_t *proc, uint8_t bit,
-                                          float complex sample_a,
-                                          float complex sample_b);
 
 /**
  * @brief Retrieve the last captured packet.

@@ -108,6 +108,16 @@ if(NOT BTBB_FOUND)
     message(WARNING "BTBB library not found. ac-finder example will be skipped.")
 endif()
 
+set(SUPERTOOTH_SOURCE_INCLUDE_DIRS
+    ${CMAKE_SOURCE_DIR}/src/apps
+    ${CMAKE_SOURCE_DIR}/src/models
+    ${CMAKE_SOURCE_DIR}/src/radio
+    ${CMAKE_SOURCE_DIR}/src/dsp
+    ${CMAKE_SOURCE_DIR}/src/protocol/ble
+    ${CMAKE_SOURCE_DIR}/src/protocol/bredr
+    ${CMAKE_SOURCE_DIR}/src/service
+)
+
 # Create a custom target for all examples
 add_custom_target(examples)
 
@@ -165,7 +175,13 @@ endif()
 
 # live-channel executable (requires all libraries)
 if(HACKRF_FOUND AND LIQUID_FOUND AND BTBB_FOUND)
-    add_executable(live-channel live-channel.c ${CMAKE_SOURCE_DIR}/src/radio/hackrf.c ${CMAKE_SOURCE_DIR}/src/radio/hackrf.h)
+    add_executable(live-channel
+        live-channel.c
+        ${CMAKE_SOURCE_DIR}/src/radio/hackrf.c
+        ${CMAKE_SOURCE_DIR}/src/radio/hackrf.h
+        ${CMAKE_SOURCE_DIR}/src/models/rssi_measurements.c
+        ${CMAKE_SOURCE_DIR}/src/models/rssi_measurements.h
+    )
     target_link_libraries(live-channel 
         ${HACKRF_LIBRARIES}
         ${LIQUID_LIBRARIES} 
@@ -195,6 +211,8 @@ if(HACKRF_FOUND AND LIQUID_FOUND)
         bredr-detector.c
         ${CMAKE_SOURCE_DIR}/src/radio/hackrf.c
         ${CMAKE_SOURCE_DIR}/src/radio/hackrf.h
+        ${CMAKE_SOURCE_DIR}/src/models/rssi_measurements.c
+        ${CMAKE_SOURCE_DIR}/src/models/rssi_measurements.h
         ${CMAKE_SOURCE_DIR}/src/protocol/bredr/bredr_phy.c
         ${CMAKE_SOURCE_DIR}/src/protocol/bredr/bredr_phy.h
     )
@@ -223,6 +241,8 @@ if(HACKRF_FOUND AND LIQUID_FOUND AND BTBB_FOUND)
         bredr-scanner.c
         ${CMAKE_SOURCE_DIR}/src/radio/hackrf.c
         ${CMAKE_SOURCE_DIR}/src/radio/hackrf.h
+        ${CMAKE_SOURCE_DIR}/src/models/rssi_measurements.c
+        ${CMAKE_SOURCE_DIR}/src/models/rssi_measurements.h
         ${CMAKE_SOURCE_DIR}/src/protocol/bredr/bredr_phy.c
         ${CMAKE_SOURCE_DIR}/src/protocol/bredr/bredr_phy.h
         ${CMAKE_SOURCE_DIR}/src/protocol/bredr/bredr_piconet.c
@@ -260,6 +280,8 @@ if(HACKRF_FOUND AND LIQUID_FOUND)
         bredr2csv.c
         ${CMAKE_SOURCE_DIR}/src/radio/hackrf.c
         ${CMAKE_SOURCE_DIR}/src/radio/hackrf.h
+        ${CMAKE_SOURCE_DIR}/src/models/rssi_measurements.c
+        ${CMAKE_SOURCE_DIR}/src/models/rssi_measurements.h
         ${CMAKE_SOURCE_DIR}/src/protocol/bredr/bredr_phy.c
         ${CMAKE_SOURCE_DIR}/src/protocol/bredr/bredr_phy.h
     )
@@ -288,6 +310,8 @@ if(HACKRF_FOUND AND LIQUID_FOUND AND BTBB_FOUND)
         edr_intro.c
         ${CMAKE_SOURCE_DIR}/src/radio/hackrf.c
         ${CMAKE_SOURCE_DIR}/src/radio/hackrf.h
+        ${CMAKE_SOURCE_DIR}/src/models/rssi_measurements.c
+        ${CMAKE_SOURCE_DIR}/src/models/rssi_measurements.h
         ${CMAKE_SOURCE_DIR}/src/protocol/bredr/bredr_phy.c
         ${CMAKE_SOURCE_DIR}/src/protocol/bredr/bredr_phy.h
         ${CMAKE_SOURCE_DIR}/src/protocol/bredr/bredr_piconet.c

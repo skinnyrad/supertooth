@@ -1,4 +1,5 @@
 #include "receiver_dsp.h"
+#include "rssi_measurements.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -100,9 +101,7 @@ void receiver_bredr_process_channel(receiver_bredr_channel_ctx_t *ctx,
     {
         unsigned int raw_sym = cpfskdem_demodulate(ctx->demod, &ctx->decimated[i]);
         uint8_t bit = (uint8_t)(raw_sym & 1u);
-        bredr_status_t s = bredr_push_bit_and_samples(&ctx->proc, bit,
-                                                      ctx->decimated[i],
-                                                      ctx->decimated[i + 1u]);
+        bredr_status_t s = bredr_push_bit(&ctx->proc, bit);
         local_bits++;
         if (s != BREDR_VALID_PACKET)
             continue;
@@ -123,9 +122,14 @@ void receiver_bredr_process_channel(receiver_bredr_channel_ctx_t *ctx,
             : 0ULL;
         unsigned long long abs_raw =
             blk->block_base_sample + ac_bit_in_block * session->bredr_raw_samps_per_bit;
+        unsigned int rssi_start = (unsigned int)(ac_bit_in_block * RECEIVER_BREDR_SYMBOL_STEP);
+        unsigned int rssi_end = rssi_start + BREDR_AC_SAMPLES;
+        if (rssi_end > decimated_samples)
+            rssi_end = decimated_samples;
         uint32_t clkn = receiver_bredr_sample_to_clkn(session, abs_raw);
         pkt.rx_clk_ref = abs_raw;
         pkt.rx_clk_1600 = receiver_bredr_sample_to_rx_clk_1600(session, abs_raw);
+        pkt.rssi = receiver_rssi_from_mean_power_range(ctx->decimated, rssi_start, rssi_end, 0.0f);
         rx_metadata_t meta = receiver_make_metadata(abs_raw,
                                                     (uint32_t)(RECEIVER_BREDR_CHANNEL_0_FREQ +
                                                                (double)ctx->bredr_channel *

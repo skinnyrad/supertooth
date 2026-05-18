@@ -32,7 +32,7 @@ typedef struct
     /** Logical channel index when known; otherwise set by the caller as needed. */
     uint16_t channel_index;
 
-    /** Measured receive power in dBr. */
+    /** Normalized receive power in dBr, computed by shared RSSI helpers. */
     float rssi_dbr;
 
     /** Decoder/framer confidence on a 0-255 scale. */

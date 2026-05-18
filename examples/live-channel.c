@@ -11,7 +11,8 @@
 #include <inttypes.h>
 #include <string.h>
 #include <sys/time.h>
-#include "../src/hackrf.h"
+#include "../src/radio/hackrf.h"
+#include "rssi_measurements.h"
 
 #define SAMPLE_RATE 20e6
 #define LO_FREQ_HZ 2460e6
@@ -63,22 +64,10 @@ int bredr_channel_cb(hackrf_transfer *transfer)
     {
         uint32_t lap = btbb_packet_get_lap(pkt);
 
-        // Calculate power for each IQ sample and find maximum
-        float max_power = 0.0f;
-        for (unsigned int i = offset * 2; i < offset * 2 + 144; i++)
-        {
-            float power = crealf(decimated[i]) * crealf(decimated[i]) +
-                          cimagf(decimated[i]) * cimagf(decimated[i]);
-            if (power > max_power)
-                max_power = power;
-        }
-
-        // Convert power to relative RSSI in dBr
-        float rssi_dbr = 0.0f;
-        if (max_power > 0.0f)
-        {
-            rssi_dbr = 10.0f * log10f(max_power);
-        }
+        float rssi_dbr = receiver_rssi_from_mean_power_range(decimated,
+                                                             offset * 2u,
+                                                             offset * 2u + 144u,
+                                                             0.0f);
         printf("LAP: %06x, AC errors: %d, RSSI: %f dBr\n", lap, btbb_packet_get_ac_errors(pkt), rssi_dbr);
         fflush(stdout);
 

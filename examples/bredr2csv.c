@@ -54,7 +54,7 @@
 #include <libhackrf/hackrf.h>
 #include <liquid/liquid.h>
 
-#include "../src/hackrf.h"
+#include "../src/radio/hackrf.h"
 #include "../src/bredr_phy.h"
 
 /* -------------------------------------------------------------------------
@@ -182,9 +182,7 @@ static void process_channel(channel_ctx_t *ctx)
     for (unsigned int i = 0; i + SYMBOL_STEP <= ndec; i += SYMBOL_STEP)
     {
         uint8_t bit = (uint8_t)(cpfskdem_demodulate(ctx->demod, &ctx->decimated[i]) & 1u);
-        bredr_status_t s = bredr_push_bit_and_samples(&ctx->proc, bit,
-                                                      ctx->decimated[i],
-                                                      ctx->decimated[i + 1u]);
+        bredr_status_t s = bredr_push_bit(&ctx->proc, bit);
 
         if (s != BREDR_VALID_PACKET)
             continue;

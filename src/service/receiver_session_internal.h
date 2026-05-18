@@ -11,7 +11,6 @@
 #include "hackrf.h"
 #include "bredr_piconet.h"
 #include "bredr_piconet_store.h"
-#include "bredr_detect_btbb.h"
 
 #define RECEIVER_BTLE_SAMPLE_RATE 2000000u
 #define RECEIVER_BTLE_LNA_GAIN 32u
