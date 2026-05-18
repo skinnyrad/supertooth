@@ -41,6 +41,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include "packet_models.h"
 #include "bredr_phy.h"
 
 #ifdef __cplusplus
@@ -129,8 +130,8 @@ extern "C"
 
         /* -- Ring buffer -------------------------------------------------------- */
 
-        /** Circular queue of the 1024 most recently received packets. */
-        bredr_packet_t queue[BREDR_PICONET_QUEUE_SIZE];
+        /** Circular queue of the 1024 most recently received decoded packets. */
+        decoded_packet_t queue[BREDR_PICONET_QUEUE_SIZE];
 
         /** Index of the next slot to overwrite (0 … QUEUE_SIZE-1). */
         unsigned int queue_head;
@@ -184,10 +185,10 @@ extern "C"
      * LT_ADDR).
      *
      * @param pnet  Must not be NULL and must have been initialised.
-     * @param pkt   Packet to add.  Must not be NULL.
+    * @param packet Decoded packet to add. Must not be NULL and must be BR/EDR.
      */
     void bredr_piconet_add_packet(bredr_piconet_t *pnet,
-                                  const bredr_packet_t *pkt);
+                                  const decoded_packet_t *packet);
 
     /**
      * @brief Record the UAP and initial CLK1-6, as solved by libbtbb.

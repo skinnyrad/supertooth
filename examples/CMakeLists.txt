@@ -165,7 +165,7 @@ endif()
 
 # live-channel executable (requires all libraries)
 if(HACKRF_FOUND AND LIQUID_FOUND AND BTBB_FOUND)
-    add_executable(live-channel live-channel.c ${CMAKE_SOURCE_DIR}/src/hackrf.c ${CMAKE_SOURCE_DIR}/src/hackrf.h)
+    add_executable(live-channel live-channel.c ${CMAKE_SOURCE_DIR}/src/radio/hackrf.c ${CMAKE_SOURCE_DIR}/src/radio/hackrf.h)
     target_link_libraries(live-channel 
         ${HACKRF_LIBRARIES}
         ${LIQUID_LIBRARIES} 
@@ -175,7 +175,7 @@ if(HACKRF_FOUND AND LIQUID_FOUND AND BTBB_FOUND)
         ${HACKRF_INCLUDE_DIRS}
         ${LIQUID_INCLUDE_DIRS}
         ${BTBB_INCLUDE_DIRS}
-        ${CMAKE_SOURCE_DIR}/src
+        ${SUPERTOOTH_SOURCE_INCLUDE_DIRS}
     )
     if(HACKRF_CFLAGS_OTHER)
         target_compile_options(live-channel PRIVATE ${HACKRF_CFLAGS_OTHER})
@@ -193,10 +193,10 @@ endif()
 if(HACKRF_FOUND AND LIQUID_FOUND)
     add_executable(bredr-detector
         bredr-detector.c
-        ${CMAKE_SOURCE_DIR}/src/hackrf.c
-        ${CMAKE_SOURCE_DIR}/src/hackrf.h
-        ${CMAKE_SOURCE_DIR}/src/bredr_phy.c
-        ${CMAKE_SOURCE_DIR}/src/bredr_phy.h
+        ${CMAKE_SOURCE_DIR}/src/radio/hackrf.c
+        ${CMAKE_SOURCE_DIR}/src/radio/hackrf.h
+        ${CMAKE_SOURCE_DIR}/src/protocol/bredr/bredr_phy.c
+        ${CMAKE_SOURCE_DIR}/src/protocol/bredr/bredr_phy.h
     )
     target_link_libraries(bredr-detector
         ${HACKRF_LIBRARIES}
@@ -205,7 +205,7 @@ if(HACKRF_FOUND AND LIQUID_FOUND)
     target_include_directories(bredr-detector PRIVATE
         ${HACKRF_INCLUDE_DIRS}
         ${LIQUID_INCLUDE_DIRS}
-        ${CMAKE_SOURCE_DIR}/src
+        ${SUPERTOOTH_SOURCE_INCLUDE_DIRS}
     )
     if(HACKRF_CFLAGS_OTHER)
         target_compile_options(bredr-detector PRIVATE ${HACKRF_CFLAGS_OTHER})
@@ -221,14 +221,14 @@ endif()
 if(HACKRF_FOUND AND LIQUID_FOUND AND BTBB_FOUND)
     add_executable(bredr-scanner
         bredr-scanner.c
-        ${CMAKE_SOURCE_DIR}/src/hackrf.c
-        ${CMAKE_SOURCE_DIR}/src/hackrf.h
-        ${CMAKE_SOURCE_DIR}/src/bredr_phy.c
-        ${CMAKE_SOURCE_DIR}/src/bredr_phy.h
-        ${CMAKE_SOURCE_DIR}/src/bredr_piconet.c
-        ${CMAKE_SOURCE_DIR}/src/bredr_piconet.h
-        ${CMAKE_SOURCE_DIR}/src/bredr_piconet_store.c
-        ${CMAKE_SOURCE_DIR}/src/bredr_piconet_store.h
+        ${CMAKE_SOURCE_DIR}/src/radio/hackrf.c
+        ${CMAKE_SOURCE_DIR}/src/radio/hackrf.h
+        ${CMAKE_SOURCE_DIR}/src/protocol/bredr/bredr_phy.c
+        ${CMAKE_SOURCE_DIR}/src/protocol/bredr/bredr_phy.h
+        ${CMAKE_SOURCE_DIR}/src/protocol/bredr/bredr_piconet.c
+        ${CMAKE_SOURCE_DIR}/src/protocol/bredr/bredr_piconet.h
+        ${CMAKE_SOURCE_DIR}/src/protocol/bredr/bredr_piconet_store.c
+        ${CMAKE_SOURCE_DIR}/src/protocol/bredr/bredr_piconet_store.h
     )
     target_link_libraries(bredr-scanner
         ${HACKRF_LIBRARIES}
@@ -239,7 +239,7 @@ if(HACKRF_FOUND AND LIQUID_FOUND AND BTBB_FOUND)
         ${HACKRF_INCLUDE_DIRS}
         ${LIQUID_INCLUDE_DIRS}
         ${BTBB_INCLUDE_DIRS}
-        ${CMAKE_SOURCE_DIR}/src
+        ${SUPERTOOTH_SOURCE_INCLUDE_DIRS}
     )
     if(HACKRF_CFLAGS_OTHER)
         target_compile_options(bredr-scanner PRIVATE ${HACKRF_CFLAGS_OTHER})
@@ -258,10 +258,10 @@ endif()
 if(HACKRF_FOUND AND LIQUID_FOUND)
     add_executable(bredr2csv
         bredr2csv.c
-        ${CMAKE_SOURCE_DIR}/src/hackrf.c
-        ${CMAKE_SOURCE_DIR}/src/hackrf.h
-        ${CMAKE_SOURCE_DIR}/src/bredr_phy.c
-        ${CMAKE_SOURCE_DIR}/src/bredr_phy.h
+        ${CMAKE_SOURCE_DIR}/src/radio/hackrf.c
+        ${CMAKE_SOURCE_DIR}/src/radio/hackrf.h
+        ${CMAKE_SOURCE_DIR}/src/protocol/bredr/bredr_phy.c
+        ${CMAKE_SOURCE_DIR}/src/protocol/bredr/bredr_phy.h
     )
     target_link_libraries(bredr2csv
         ${HACKRF_LIBRARIES}
@@ -270,7 +270,7 @@ if(HACKRF_FOUND AND LIQUID_FOUND)
     target_include_directories(bredr2csv PRIVATE
         ${HACKRF_INCLUDE_DIRS}
         ${LIQUID_INCLUDE_DIRS}
-        ${CMAKE_SOURCE_DIR}/src
+        ${SUPERTOOTH_SOURCE_INCLUDE_DIRS}
     )
     if(HACKRF_CFLAGS_OTHER)
         target_compile_options(bredr2csv PRIVATE ${HACKRF_CFLAGS_OTHER})
@@ -286,14 +286,14 @@ endif()
 if(HACKRF_FOUND AND LIQUID_FOUND AND BTBB_FOUND)
     add_executable(edr_intro
         edr_intro.c
-        ${CMAKE_SOURCE_DIR}/src/hackrf.c
-        ${CMAKE_SOURCE_DIR}/src/hackrf.h
-        ${CMAKE_SOURCE_DIR}/src/bredr_phy.c
-        ${CMAKE_SOURCE_DIR}/src/bredr_phy.h
-        ${CMAKE_SOURCE_DIR}/src/bredr_piconet.c
-        ${CMAKE_SOURCE_DIR}/src/bredr_piconet.h
-        ${CMAKE_SOURCE_DIR}/src/bredr_piconet_store.c
-        ${CMAKE_SOURCE_DIR}/src/bredr_piconet_store.h
+        ${CMAKE_SOURCE_DIR}/src/radio/hackrf.c
+        ${CMAKE_SOURCE_DIR}/src/radio/hackrf.h
+        ${CMAKE_SOURCE_DIR}/src/protocol/bredr/bredr_phy.c
+        ${CMAKE_SOURCE_DIR}/src/protocol/bredr/bredr_phy.h
+        ${CMAKE_SOURCE_DIR}/src/protocol/bredr/bredr_piconet.c
+        ${CMAKE_SOURCE_DIR}/src/protocol/bredr/bredr_piconet.h
+        ${CMAKE_SOURCE_DIR}/src/protocol/bredr/bredr_piconet_store.c
+        ${CMAKE_SOURCE_DIR}/src/protocol/bredr/bredr_piconet_store.h
     )
     target_link_libraries(edr_intro
         ${HACKRF_LIBRARIES}
@@ -304,7 +304,7 @@ if(HACKRF_FOUND AND LIQUID_FOUND AND BTBB_FOUND)
         ${HACKRF_INCLUDE_DIRS}
         ${LIQUID_INCLUDE_DIRS}
         ${BTBB_INCLUDE_DIRS}
-        ${CMAKE_SOURCE_DIR}/src
+        ${SUPERTOOTH_SOURCE_INCLUDE_DIRS}
     )
     if(HACKRF_CFLAGS_OTHER)
         target_compile_options(edr_intro PRIVATE ${HACKRF_CFLAGS_OTHER})
@@ -342,3 +342,12 @@ if(UNIX AND NOT APPLE)
         target_link_libraries(bredr-detector m)
     endif()
 endif()
+set(SUPERTOOTH_SOURCE_INCLUDE_DIRS
+    ${CMAKE_SOURCE_DIR}/src/apps
+    ${CMAKE_SOURCE_DIR}/src/models
+    ${CMAKE_SOURCE_DIR}/src/radio
+    ${CMAKE_SOURCE_DIR}/src/dsp
+    ${CMAKE_SOURCE_DIR}/src/protocol/ble
+    ${CMAKE_SOURCE_DIR}/src/protocol/bredr
+    ${CMAKE_SOURCE_DIR}/src/service
+)

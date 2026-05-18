@@ -110,105 +110,130 @@ endif()
 
 find_package(Threads REQUIRED)
 
-add_executable(supertooth-rx
-    supertooth-rx.c
-    hackrf.c hackrf.h
-    bredr_phy.c bredr_phy.h
-    bredr_piconet.c bredr_piconet.h
-    bredr_piconet_store.c bredr_piconet_store.h)
+set(SUPERTOOTH_SOURCE_INCLUDE_DIRS
+    ${CMAKE_CURRENT_SOURCE_DIR}/apps
+    ${CMAKE_CURRENT_SOURCE_DIR}/models
+    ${CMAKE_CURRENT_SOURCE_DIR}/radio
+    ${CMAKE_CURRENT_SOURCE_DIR}/dsp
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocol/ble
+    ${CMAKE_CURRENT_SOURCE_DIR}/protocol/bredr
+    ${CMAKE_CURRENT_SOURCE_DIR}/service
+)
 
-# Link libraries - use full paths for more reliable linking
-target_link_libraries(supertooth-rx 
+add_library(supertooth_radio_support STATIC
+    radio/hackrf.c
+    radio/hackrf.h
+)
+
+target_link_libraries(supertooth_radio_support
     ${HACKRF_LIBRARIES}
-    ${LIQUID_LIBRARIES} 
+)
+
+target_include_directories(supertooth_radio_support PUBLIC
+    ${HACKRF_INCLUDE_DIRS}
+    ${SUPERTOOTH_SOURCE_INCLUDE_DIRS}
+)
+
+if(HACKRF_CFLAGS_OTHER)
+    target_compile_options(supertooth_radio_support PRIVATE ${HACKRF_CFLAGS_OTHER})
+endif()
+
+add_library(supertooth_protocol_core STATIC
+    models/packet_models.h
+    models/rx_metadata.h
+    protocol/ble/ble_codec.c protocol/ble/ble_codec.h
+    protocol/ble/ble_framer.c protocol/ble/ble_framer.h
+    protocol/ble/ble_phy.c protocol/ble/ble_phy.h
+    protocol/ble/bt_assigned_numbers.c protocol/ble/bt_assigned_numbers.h
+    protocol/bredr/bredr_header_codec.c protocol/bredr/bredr_header_codec.h
+    protocol/bredr/bredr_measurements.c protocol/bredr/bredr_measurements.h
+    protocol/bredr/bredr_phy.c protocol/bredr/bredr_phy.h
+    protocol/bredr/bredr_piconet.c protocol/bredr/bredr_piconet.h
+    protocol/bredr/bredr_piconet_store.c protocol/bredr/bredr_piconet_store.h
+    protocol/bredr/bredr_recovery.c protocol/bredr/bredr_recovery.h
+    protocol/bredr/bredr_recovery_backend.h
+    protocol/bredr/bredr_recovery_btbb.c protocol/bredr/bredr_recovery_btbb.h
+    protocol/bredr/bredr_detect_btbb.c protocol/bredr/bredr_detect_btbb.h
+)
+
+target_link_libraries(supertooth_protocol_core
+    ${LIQUID_LIBRARIES}
     ${BTBB_LIBRARIES}
 )
 
-# Add include directories
-target_include_directories(supertooth-rx PRIVATE
-    ${HACKRF_INCLUDE_DIRS}
+target_include_directories(supertooth_protocol_core PUBLIC
     ${LIQUID_INCLUDE_DIRS}
     ${BTBB_INCLUDE_DIRS}
+    ${SUPERTOOTH_SOURCE_INCLUDE_DIRS}
 )
 
-# Add compiler flags if needed
-if(HACKRF_CFLAGS_OTHER)
-    target_compile_options(supertooth-rx PRIVATE ${HACKRF_CFLAGS_OTHER})
-endif()
 if(LIQUID_CFLAGS_OTHER)
-    target_compile_options(supertooth-rx PRIVATE ${LIQUID_CFLAGS_OTHER})
+    target_compile_options(supertooth_protocol_core PRIVATE ${LIQUID_CFLAGS_OTHER})
 endif()
 if(BTBB_CFLAGS_OTHER)
-    target_compile_options(supertooth-rx PRIVATE ${BTBB_CFLAGS_OTHER})
+    target_compile_options(supertooth_protocol_core PRIVATE ${BTBB_CFLAGS_OTHER})
 endif()
 
-# Add math library which might be needed
 if(UNIX AND NOT APPLE)
-    target_link_libraries(supertooth-rx m)
+    target_link_libraries(supertooth_protocol_core m)
 endif()
+
+add_library(supertooth_service STATIC
+    service/receiver_session.c
+    service/receiver_session.h
+    service/receiver_session_internal.h
+    dsp/receiver_dsp.h
+    dsp/receiver_btle_dsp.c
+    dsp/receiver_bredr_dsp.c
+    dsp/receiver_hybrid_dsp.c
+    service/receiver_session_btle.c
+    service/receiver_session_bredr.c
+    service/receiver_session_hybrid.c
+)
+
+target_link_libraries(supertooth_service
+    supertooth_radio_support
+    supertooth_protocol_core
+)
+
+target_include_directories(supertooth_service PUBLIC
+    ${SUPERTOOTH_SOURCE_INCLUDE_DIRS}
+)
+
+add_executable(supertooth-rx
+    apps/supertooth-rx.c
+)
+
+target_link_libraries(supertooth-rx 
+    supertooth_service
+)
+
+target_include_directories(supertooth-rx PRIVATE
+    ${SUPERTOOTH_SOURCE_INCLUDE_DIRS}
+)
 
 # Add supertooth-btle executable (BTLE advertising packet detector)
 add_executable(supertooth-btle
-    supertooth-btle.c
-    hackrf.c hackrf.h
-    ble_phy.c ble_phy.h
-    bt_assigned_numbers.c bt_assigned_numbers.h)
+    apps/supertooth-btle.c
+)
 
-# Link libraries for supertooth-btle (doesn't need BTBB)
 target_link_libraries(supertooth-btle 
-    ${HACKRF_LIBRARIES}
-    ${LIQUID_LIBRARIES}
+    supertooth_service
 )
 
-# Add include directories
 target_include_directories(supertooth-btle PRIVATE
-    ${HACKRF_INCLUDE_DIRS}
-    ${LIQUID_INCLUDE_DIRS}
+    ${SUPERTOOTH_SOURCE_INCLUDE_DIRS}
 )
-
-# Add compiler flags if needed
-if(HACKRF_CFLAGS_OTHER)
-    target_compile_options(supertooth-btle PRIVATE ${HACKRF_CFLAGS_OTHER})
-endif()
-if(LIQUID_CFLAGS_OTHER)
-    target_compile_options(supertooth-btle PRIVATE ${LIQUID_CFLAGS_OTHER})
-endif()
-
-# Add math library which might be needed for supertooth-btle
-if(UNIX AND NOT APPLE)
-    target_link_libraries(supertooth-btle m)
-endif()
 
 # supertooth-hybrid: BR/EDR ch0-19 + BLE ch37 simultaneous capture
 add_executable(supertooth-hybrid
-    supertooth-hybrid.c hackrf.c hackrf.h
-    ble_phy.c ble_phy.h
-    bt_assigned_numbers.c bt_assigned_numbers.h
-    bredr_phy.c bredr_phy.h
-    bredr_piconet.c bredr_piconet.h)
+    apps/supertooth-hybrid.c
+)
 
 target_link_libraries(supertooth-hybrid
-    ${HACKRF_LIBRARIES}
-    ${LIQUID_LIBRARIES}
-    ${BTBB_LIBRARIES}
+    supertooth_service
 )
 
 target_include_directories(supertooth-hybrid PRIVATE
-    ${HACKRF_INCLUDE_DIRS}
-    ${LIQUID_INCLUDE_DIRS}
-    ${BTBB_INCLUDE_DIRS}
+    ${SUPERTOOTH_SOURCE_INCLUDE_DIRS}
 )
-
-if(HACKRF_CFLAGS_OTHER)
-    target_compile_options(supertooth-hybrid PRIVATE ${HACKRF_CFLAGS_OTHER})
-endif()
-if(LIQUID_CFLAGS_OTHER)
-    target_compile_options(supertooth-hybrid PRIVATE ${LIQUID_CFLAGS_OTHER})
-endif()
-if(BTBB_CFLAGS_OTHER)
-    target_compile_options(supertooth-hybrid PRIVATE ${BTBB_CFLAGS_OTHER})
-endif()
-
-if(UNIX AND NOT APPLE)
-    target_link_libraries(supertooth-hybrid m)
-endif()

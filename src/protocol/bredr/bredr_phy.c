@@ -6,13 +6,14 @@
  */
 
 #include "bredr_phy.h"
+#include "bredr_header_codec.h"
+#include "bredr_measurements.h"
 
 #include <string.h>   /* memset, memcpy */
 #include <stddef.h>   /* NULL */
 #include <stdio.h>    /* printf */
 #include <inttypes.h> /* PRIx32 */
-#include <complex.h>  /* float complex, crealf, cimagf */
-#include <math.h>     /* log10f */
+#include <complex.h>  /* float complex */
 
 /* ---------------------------------------------------------------------------
  * Internal state constants
@@ -64,53 +65,8 @@ static const uint64_t SW_DEFAULT_CW = 0xb0000002c7820e7eULL;
 #define BARKER_MAX_ERRORS 1u
 
 /* ---------------------------------------------------------------------------
- * Packet-type payload sizes
- *
- * Maximum on-air payload bits (including FEC overhead where applicable) for
- * each of the 16 BR/EDR packet TYPE values.  These are conservative maximums
- * used to bound bit collection when the full payload length is not decoded.
- *
- * Index = TYPE field value (4 bits, 0–15).
- * ---------------------------------------------------------------------------*/
-
-static const unsigned int s_payload_bits[16] = {
-    0,    /* 0  NULL  — no payload                              */
-    0,    /* 1  POLL  — no payload                              */
-    240,  /* 2  FHS   — 18 B, 2/3 FEC → 240 bits               */
-    480,  /* 3  DM1   — max 17 B body, 2/3 FEC → ~480 bits      */
-    216,  /* 4  DH1   — max 27 B, no FEC → 216 bits             */
-    240,  /* 5  HV1   — 10 B, 1/3 FEC → 240 bits                */
-    240,  /* 6  HV2   — 20 B, 2/3 FEC → 240 bits                */
-    240,  /* 7  HV3   — 30 B, no FEC → 240 bits                 */
-    560,  /* 8  DV    — voice + DM1 → ~560 bits                 */
-    232,  /* 9  AUX1  — max 29 B, no FEC → 232 bits             */
-    1500, /* 10 DM3   — max 121 B body, 2/3 FEC → ~1500 bits    */
-    1464, /* 11 DH3   — max 183 B, no FEC → 1464 bits           */
-    1440, /* 12 EV4   — max 120 B, 2/3 FEC → ~1440 bits         */
-    1440, /* 13 EV5   — max 180 B, no FEC → 1440 bits           */
-    2736, /* 14 DM5   — max 224 B body, 2/3 FEC → ~2736 bits    */
-    2712, /* 15 DH5   — max 339 B, no FEC → 2712 bits           */
-};
-
-unsigned int bredr_on_air_payload_bits(uint8_t type_code)
-{
-    return s_payload_bits[type_code & 0x0Fu];
-}
-
-/* ---------------------------------------------------------------------------
  * Internal helpers
  * ---------------------------------------------------------------------------*/
-
-/**
- * @brief Reverse the bits of a byte (bit 0 ↔ bit 7, bit 1 ↔ bit 6, …).
- */
-static uint8_t reverse_byte(uint8_t b)
-{
-    b = (uint8_t)(((b & 0xF0u) >> 4) | ((b & 0x0Fu) << 4));
-    b = (uint8_t)(((b & 0xCCu) >> 2) | ((b & 0x33u) << 2));
-    b = (uint8_t)(((b & 0xAAu) >> 1) | ((b & 0x55u) << 1));
-    return b;
-}
 
 /**
  * @brief Compute the 8-bit HEC for a 10-bit header and a known UAP.
@@ -131,21 +87,6 @@ static uint8_t reverse_byte(uint8_t b)
  * @param uap   8-bit Upper Address Part (UAP0 in bit 0, UAP7 in bit 7).
  * @return      8-bit HEC register; bit 7 is the first bit transmitted.
  */
-uint8_t bredr_compute_hec(uint16_t data, uint8_t uap)
-{
-    uint8_t lfsr = uap;
-
-    for (int i = 0; i < 10; i++)
-    {
-        uint8_t fb = ((lfsr >> 7u) & 1u) ^ ((data >> i) & 1u);
-
-        lfsr = (uint8_t)(lfsr << 1u); /* shift left; bit 0 becomes 0 */
-        if (fb)
-            lfsr ^= 0xA7u; /* tap mask: D^7+D^5+D^2+D+1   */
-    }
-    return lfsr; /* bit 7 = first HEC bit to be transmitted */
-}
-
 /**
  * @brief Count the number of set bits in a 64-bit word (Hamming weight).
  */
@@ -246,43 +187,6 @@ static uint8_t read_symbol_bit(const bredr_processor_t *proc,
     if (byte_idx >= sizeof(proc->raw_symbols))
         return 0u;
     return (proc->raw_symbols[byte_idx] >> bit_idx) & 1u;
-}
-
-/**
- * @brief Decode the 54-bit 1/3-FEC-encoded header into individual field bits.
- *
- * Each of the 18 header bits is transmitted three times (positions 3i, 3i+1,
- * 3i+2 in the FEC stream).  A majority vote recovers the original bit.
- *
- * Header field layout (Bluetooth Core Spec Vol 2, Part B, §7.3):
- *   bits  0– 2  LT_ADDR  (3 bits)
- *   bits  3– 6  TYPE     (4 bits)
- *   bit   7     FLOW
- *   bit   8     ARQN
- *   bit   9     SEQN
- *   bits 10–17  HEC      (8 bits)
- */
-static void decode_fec_header(const bredr_processor_t *proc,
-                              uint8_t *lt_addr, uint8_t *type,
-                              uint8_t *flow, uint8_t *arqn,
-                              uint8_t *seqn, uint8_t *hec)
-{
-    uint8_t hdr[18];
-    for (int i = 0; i < 18; i++)
-    {
-        uint8_t a = read_symbol_bit(proc, (unsigned int)(3 * i));
-        uint8_t b = read_symbol_bit(proc, (unsigned int)(3 * i + 1));
-        uint8_t c = read_symbol_bit(proc, (unsigned int)(3 * i + 2));
-        /* majority vote */
-        hdr[i] = (uint8_t)((a & b) | (b & c) | (c & a));
-    }
-
-    *lt_addr = (hdr[0]) | (uint8_t)(hdr[1] << 1) | (uint8_t)(hdr[2] << 2);
-    *type = (hdr[3]) | (uint8_t)(hdr[4] << 1) | (uint8_t)(hdr[5] << 2) | (uint8_t)(hdr[6] << 3);
-    *flow = hdr[7];
-    *arqn = hdr[8];
-    *seqn = hdr[9];
-    *hec = (hdr[10]) | (uint8_t)(hdr[11] << 1) | (uint8_t)(hdr[12] << 2) | (uint8_t)(hdr[13] << 3) | (uint8_t)(hdr[14] << 4) | (uint8_t)(hdr[15] << 5) | (uint8_t)(hdr[16] << 6) | (uint8_t)(hdr[17] << 7);
 }
 
 /* ---------------------------------------------------------------------------
@@ -436,14 +340,13 @@ bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit)
      * ------------------------------------------------------------------- */
     if (!proc->header_decoded && proc->bits_collected >= 54u)
     {
-        uint8_t lt_addr, type, flow, arqn, seqn, hec;
-        decode_fec_header(proc, &lt_addr, &type, &flow, &arqn, &seqn, &hec);
-
-        /* Pack the 54 raw FEC bits into header_raw (bit 0 = first received). */
         uint64_t header_raw = 0u;
         for (unsigned int i = 0u; i < 54u; i++)
             if (read_symbol_bit(proc, i))
                 header_raw |= (uint64_t)1u << i;
+
+        uint8_t lt_addr, type, flow, arqn, seqn, hec;
+        bredr_decode_fec_header_raw(header_raw, &lt_addr, &type, &flow, &arqn, &seqn, &hec);
         proc->last_packet.header_raw = header_raw;
 
         /* Store decoded header fields directly into the staging packet so we
@@ -455,7 +358,7 @@ bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit)
         proc->last_packet.seqn = seqn;
         proc->last_packet.hec = hec;
 
-        unsigned int payload_bits = s_payload_bits[type & 0x0Fu];
+        unsigned int payload_bits = bredr_on_air_payload_bits(type);
         proc->bits_to_collect = 54u + payload_bits;
         /* Cap at the buffer ceiling. */
         if (proc->bits_to_collect > BREDR_SYMBOLS_MAX)
@@ -502,7 +405,7 @@ bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit)
          * Our decoded pkt->hec has bit 0 = first received, so it is the
          * bit-reversal of the LFSR register output. */
         uint8_t expected_hec = bredr_compute_hec(hdr_data, BREDR_DCI);
-        pkt->hec_valid = (expected_hec == reverse_byte(pkt->hec)) ? 1u : 2u;
+        pkt->hec_valid = (expected_hec == bredr_reverse_byte(pkt->hec)) ? 1u : 2u;
     }
     else
     {
@@ -511,45 +414,16 @@ bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit)
 
     /* Extract payload bytes from raw_symbols starting at bit 54.
      * Bits are packed LSB-first; read them out byte by byte. */
-    unsigned int payload_bits = (proc->bits_collected > 54u)
-                                    ? (proc->bits_collected - 54u)
-                                    : 0u;
-    unsigned int payload_bytes = payload_bits / 8u;
-    if (payload_bytes > BREDR_MAX_PAYLOAD_BYTES)
-        payload_bytes = BREDR_MAX_PAYLOAD_BYTES;
-
-    for (unsigned int i = 0u; i < payload_bytes; i++)
-    {
-        uint8_t byte = 0u;
-        for (unsigned int bit_idx = 0u; bit_idx < 8u; bit_idx++)
-        {
-            unsigned int pos = 54u + i * 8u + bit_idx;
-            byte |= (uint8_t)(read_symbol_bit(proc, pos) << bit_idx);
-        }
-        pkt->payload[i] = byte;
-    }
-    pkt->payload_bytes = payload_bytes;
+    pkt->payload_bytes = bredr_extract_payload_bytes(proc->raw_symbols,
+                                                     proc->bits_collected,
+                                                     pkt->payload,
+                                                     BREDR_MAX_PAYLOAD_BYTES);
 
     proc->packet_ready = 1;
 
     /* Reset to SEARCHING for the next packet, then return VALID. */
     reset_collection(proc);
     return BREDR_VALID_PACKET;
-}
-
-static float compute_ac_ring_rssi_dbr(const bredr_processor_t *proc)
-{
-    float sum_power = 0.0f;
-    for (unsigned int k = 0u; k < BREDR_AC_SAMPLES; k++)
-    {
-        float re = crealf(proc->ac_ring[k]);
-        float im = cimagf(proc->ac_ring[k]);
-        sum_power += re * re + im * im;
-    }
-    float mean_power = sum_power * (1.0f / (float)BREDR_AC_SAMPLES);
-    return (mean_power > 0.0f)
-        ? 10.0f * log10f(mean_power)
-        : -99.0f;
 }
 
 bredr_status_t bredr_push_bit_and_samples(bredr_processor_t *proc, uint8_t bit,
@@ -572,7 +446,7 @@ bredr_status_t bredr_push_bit_and_samples(bredr_processor_t *proc, uint8_t bit,
 
     /* AC matched on this call (including immediate inquiry packet path). */
     if (was_searching && status != BREDR_SEARCHING)
-        proc->last_packet.rssi = compute_ac_ring_rssi_dbr(proc);
+        proc->last_packet.rssi = bredr_compute_rssi_dbr(proc->ac_ring, BREDR_AC_SAMPLES);
 
     return status;
 }
@@ -585,51 +459,6 @@ int bredr_get_packet(bredr_processor_t *proc, bredr_packet_t *out)
     memcpy(out, &proc->last_packet, sizeof(*out));
     proc->packet_ready = 0;
     return 0;
-}
-
-/* ---------------------------------------------------------------------------
- * Whitening tables — identical to libbtbb bluetooth_packet.c
- * Used for header dewhitening in bredr_decode_header_bits().
- * ---------------------------------------------------------------------------*/
-
-static const uint8_t s_whitening_indices[64] = {
-    99, 85, 17, 50, 102, 58, 108, 45, 92, 62, 32, 118, 88, 11, 80, 2,
-    37, 69, 55,  8,  20, 40,  74,114, 15,106, 30, 78, 53, 72, 28,26,
-    68,  7, 39,113, 105, 77,  71, 25, 84, 49,  57, 44, 61,117, 10, 1,
-   123,124, 22,125, 111, 23,  42,126,  6,112,  76, 24, 48, 43,116, 0
-};
-
-static const uint8_t s_whitening_data[127] = {
-    1,1,1,0,0,0,1,1,1,0,1,1,0,0,0,1,0,1,0,0,1,0,1,1,1,1,1,0,
-    1,0,1,0,1,0,0,0,0,1,0,1,1,0,1,1,1,1,0,0,1,1,1,0,0,1,0,1,
-    0,1,1,0,0,1,1,0,0,0,0,0,1,1,0,1,1,0,1,0,1,1,1,0,1,0,0,0,
-    1,1,0,0,1,0,0,0,1,0,0,0,0,0,0,1,0,0,1,0,0,1,1,0,1,0,0,1,
-    1,1,1,0,1,1,1,0,0,0,0,1,1,1,1
-};
-
-/* ---------------------------------------------------------------------------
- * bredr_decode_header_bits — public shared helper
- * ---------------------------------------------------------------------------*/
-
-void bredr_decode_header_bits(const bredr_packet_t *pkt,
-                               uint8_t clk6, uint8_t bits[18])
-{
-    /* Step 1: majority-vote 1/3-FEC on the 54 raw bits to get 18 whitened bits. */
-    for (int i = 0; i < 18; i++)
-    {
-        uint8_t a = (uint8_t)((pkt->header_raw >> (3*i + 0)) & 1u);
-        uint8_t b = (uint8_t)((pkt->header_raw >> (3*i + 1)) & 1u);
-        uint8_t c = (uint8_t)((pkt->header_raw >> (3*i + 2)) & 1u);
-        bits[i] = (a & b) | (b & c) | (c & a);
-    }
-
-    /* Step 2: XOR with whitening PN sequence for the given CLK1-6. */
-    int index = (int)s_whitening_indices[clk6 & 0x3fu];
-    for (int i = 0; i < 18; i++)
-    {
-        bits[i] ^= s_whitening_data[index];
-        index = (index + 1) % 127;
-    }
 }
 
 /* ---------------------------------------------------------------------------

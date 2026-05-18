@@ -1,26 +1,23 @@
 /**
  * @file bredr_piconet_store.h
- * @brief Dynamic collection of BR/EDR piconets with integrated libbtbb UAP
- *        and clock recovery.
+ * @brief Dynamic collection of BR/EDR piconets with integrated recovery state.
  *
  * Overview
  * --------
  * A `bredr_piconet_store_t` manages a dynamic, LAP-keyed collection of
- * `bredr_piconet_t` objects.  Callers feed it raw `bredr_packet_t` objects via
+ * `bredr_piconet_t` objects.  Callers feed it decoded BR/EDR packets via
  * `bredr_piconet_store_add_packet()`; the store routes each packet to the
- * matching piconet (creating one on first sight) and internally drives libbtbb
- * UAP and clock-offset recovery.
+ * matching piconet (creating one on first sight) and internally drives a
+ * repository-owned BR/EDR recovery backend.
  *
- * libbtbb integration
- * -------------------
- * Each entry in the store owns a libbtbb piconet object that is used to
- * accumulate header packets for UAP recovery.  Once libbtbb reports a valid
- * UAP, the store immediately scans all 64 possible CLK1-6 values using HEC
- * verification to find the clock, then calls `bredr_piconet_set_uap()` to put
- * the `bredr_piconet_t` into clock-tracking mode.
- *
- * libbtbb is the only external dependency added here.  No other file in
- * supertooth needs to include or call btbb directly.
+ * Recovery backend integration
+ * ----------------------------
+ * Each entry in the store owns recovery backend state used to accumulate
+ * header packets for UAP recovery.  The current backend is libbtbb-backed,
+ * but that dependency is intentionally hidden behind repository-owned wrappers.
+ * Once the backend reports a valid UAP, the store scans all 64 CLK1-6
+ * candidates using HEC verification and calls `bredr_piconet_set_uap()` to
+ * put the `bredr_piconet_t` into clock-tracking mode.
  *
  * Idle reset
  * ----------
@@ -84,8 +81,8 @@ typedef struct
 /**
  * @brief Initialise an empty piconet store.
  *
- * Calls btbb_init() internally.  Must be called exactly once before any
- * other store function.
+ * Initialises the currently configured BR/EDR recovery backend and the store.
+ * Must be called exactly once before any other store function.
  *
  * @param store  Must not be NULL.
  */
@@ -109,21 +106,18 @@ void bredr_piconet_store_free(bredr_piconet_store_t *store);
  *
  * After adding the packet, if the packet has a clean decoded header
  * (has_header && ac_errors == 0) and the piconet does not yet have both UAP
- * and CLK1-6, the packet is fed to libbtbb.  Once libbtbb reports a valid
- * UAP, the store scans all 64 CLK1-6 candidates using HEC verification and
- * calls bredr_piconet_set_uap() on the piconet.
+ * and CLK1-6, the packet is fed to the active BR/EDR recovery backend. Once a
+ * UAP is reported, the store scans all 64 CLK1-6 candidates using HEC
+ * verification and calls bredr_piconet_set_uap() on the piconet.
  *
  * @param store    Initialised store.  Must not be NULL.
- * @param pkt      Packet to add.  Must not be NULL.
- * @param channel  BR/EDR channel (0–79) on which the packet was received.
- *                 Required for btbb packet construction.
+ * @param packet   Decoded BR/EDR packet to add. Must not be NULL.
  * @param clkn     Packet timestamp in CLKN half-slot ticks (312.5 us).
  * @return         Pointer to the piconet that received the packet, or NULL on
  *                 allocation failure.
  */
 bredr_piconet_t *bredr_piconet_store_add_packet(bredr_piconet_store_t *store,
-                                                  const bredr_packet_t *pkt,
-                                                  int channel,
+                                                  const decoded_packet_t *packet,
                                                   uint32_t clkn);
 
 /**

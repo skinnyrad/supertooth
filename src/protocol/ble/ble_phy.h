@@ -4,11 +4,15 @@
  *
  * Overview
  * --------
- * This module decodes a raw 1-Mbps BLE bitstream (GFSK, LSB-first) one bit at
- * a time.  It is intentionally stateless from the caller's perspective: all
- * decoder state lives inside a `ble_channel_processor_t` object that you
- * allocate and pass to every call.  This makes the API safe to use from an
- * SDR RX callback without any global variables.
+ * This module exposes a BLE advertising packet processor that wraps two
+ * sublayers:
+ * 1. a framer that finds packet boundaries and collects exactly one packet's
+ *    worth of on-air bits, and
+ * 2. a codec step that dewhitens and assembles the decoded advertising packet.
+ *
+ * All state lives inside a `ble_channel_processor_t` object that you allocate
+ * and pass to every call. This makes the API safe to use from an SDR RX
+ * callback without any global variables.
  *
  * Typical usage
  * -------------
@@ -41,6 +45,8 @@
 #define BLE_PHY_H
 
 #include <stdint.h>
+
+#include "ble_framer.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -157,47 +163,8 @@ extern "C"
      */
     typedef struct
     {
-        /* -- Configuration (set once at init) ---------------------------------- */
-
-        /** BLE channel index (0–39).  Used to seed the dewhitening LFSR. */
-        uint8_t channel_index;
-
-        /* -- Pattern detection ------------------------------------------------- */
-
-        /**
-         * 40-bit sliding window holding the most recent 40 received bits
-         * (bit 0 = oldest, bit 39 = newest, LSB-first packing).
-         * Used to detect [preamble || access address].
-         */
-        uint64_t bit_window;
-
-        /* -- Packet collection ------------------------------------------------- */
-
-        /** Non-zero while a packet is being assembled. */
-        int collecting;
-
-        /** Number of PDU bits collected so far during the current packet. */
-        unsigned int bits_collected;
-
-        /**
-         * Raw collection buffer (before dewhitening).
-         * Holds the PDU (header + payload) followed by the 3 CRC bytes, so it
-         * must be large enough for the maximum PDU plus the CRC.
-         */
-        uint8_t raw_pdu[BLE_PDU_MAX_BYTES + BLE_CRC_BYTES];
-
-        /**
-         * Non-zero once the 2-byte PDU header has been peeked at to determine
-         * the payload length.  Set during collection, cleared by reset_collection.
-         */
-        int header_decoded;
-
-        /**
-         * Total number of bits to collect for the current packet
-         * (2-byte header + payload + 3-byte CRC, all in bits).
-         * Valid only when header_decoded != 0.
-         */
-        unsigned int bits_to_collect;
+        /** Framing state for packet boundary detection and raw bit collection. */
+        ble_framer_t framer;
 
         /* -- Last valid packet ------------------------------------------------- */
 

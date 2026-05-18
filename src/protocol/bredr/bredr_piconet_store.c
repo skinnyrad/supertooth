@@ -1,14 +1,13 @@
 /**
  * @file bredr_piconet_store.c
- * @brief Dynamic piconet store with libbtbb UAP/clock recovery.
- *
- * This is the only file in supertooth that includes <btbb.h>.
+ * @brief Dynamic piconet store with repository-owned BR/EDR recovery plumbing.
  */
 
 #include "bredr_piconet_store.h"
+#include "bredr_header_codec.h"
 #include "bredr_phy.h"
+#include "bredr_recovery.h"
 
-#include <btbb.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -29,70 +28,10 @@
 struct bredr_piconet_store_entry
 {
     bredr_piconet_t *pnet;
-    btbb_piconet *bpn;
+    bredr_recovery_state_t *recovery;
     uint32_t last_clkn;
     int has_last_clkn;
 };
-
-/* ---------------------------------------------------------------------------
- * Static helpers (btbb packet construction + HEC verification)
- * ---------------------------------------------------------------------------*/
-
-/**
- * Build a btbb_packet from a locally decoded bredr_packet_t.
- *
- * Symbol vector layout expected by libbtbb:
- *   [64 sync word bits][4 trailer bits][54 header FEC bits][payload bits...]
- * One bit per char, air order (bit 0 = first transmitted).
- *
- * Returns a new btbb_packet (caller must btbb_packet_unref), or NULL on error.
- */
-static btbb_packet *btbb_packet_from_bredr(const bredr_packet_t *pkt,
-                                           int channel,
-                                           uint32_t clkn)
-{
-    if (!pkt || !pkt->has_header)
-        return NULL;
-
-    char symbols[BREDR_SYMBOLS_MAX] = {0};
-    unsigned int payload_bits = pkt->payload_bytes * 8u;
-    const unsigned int max_payload = BREDR_SYMBOLS_MAX > 122u
-                                         ? BREDR_SYMBOLS_MAX - 122u
-                                         : 0u;
-    if (payload_bits > max_payload)
-        payload_bits = max_payload;
-
-    /* 64-bit sync word in air (host) order. */
-    uint64_t sw = bredr_gen_syncword(pkt->lap & 0xFFFFFFu);
-    for (unsigned int i = 0; i < 64u; i++)
-        symbols[i] = (char)((sw >> i) & 1u);
-
-    /* 4-bit trailer. */
-    uint8_t sw_last = (uint8_t)((sw >> 63u) & 1u);
-    uint8_t trailer = sw_last ? 0xAu : 0x5u;
-    for (unsigned int i = 0; i < 4u; i++)
-        symbols[64u + i] = (char)((trailer >> i) & 1u);
-
-    /* 54 FEC-encoded header bits exactly as received. */
-    for (unsigned int i = 0; i < 54u; i++)
-        symbols[68u + i] = (char)((pkt->header_raw >> i) & 1u);
-
-    /* Raw payload bytes (still whitened/FEC-encoded). */
-    for (unsigned int i = 0; i < payload_bits; i++)
-        symbols[122u + i] = (char)((pkt->payload[i / 8u] >> (i % 8u)) & 1u);
-
-    btbb_packet *bp = btbb_packet_new();
-    if (!bp)
-        return NULL;
-
-    btbb_packet_set_data(bp,
-                         symbols,
-                         (int)(122u + payload_bits),
-                         (uint8_t)channel,
-                         clkn);
-    btbb_packet_set_flag(bp, BTBB_WHITENED, 1);
-    return bp;
-}
 
 /**
  * Returns 1 if clk6 + uap produce a header with matching HEC, 0 otherwise.
@@ -152,15 +91,13 @@ static bredr_piconet_store_entry_t *create_entry(bredr_piconet_store_t *store,
     if (!pnet)
         return NULL;
 
-    btbb_piconet *bpn = btbb_piconet_new();
-    if (bpn)
-        btbb_init_piconet(bpn, lap);
+    bredr_recovery_state_t *recovery = bredr_recovery_state_create(lap);
 
     bredr_piconet_init(pnet, lap);
 
     bredr_piconet_store_entry_t *entry = &store->entries[store->count++];
     entry->pnet = pnet;
-    entry->bpn = bpn;
+    entry->recovery = recovery;
     entry->last_clkn = 0u;
     entry->has_last_clkn = 0;
     return entry;
@@ -192,11 +129,12 @@ static bredr_piconet_store_entry_t *create_entry(bredr_piconet_store_t *store,
  * @return            Number of surviving candidates.
  */
 static int narrow_clk6_candidates(const bredr_piconet_t *pnet,
-                                  const bredr_packet_t *cur_pkt,
+                                  const decoded_packet_t *cur_packet,
                                   uint8_t uap,
                                   int candidates[64],
                                   int n)
 {
+    const bredr_packet_t *cur_pkt = &cur_packet->u.bredr;
     if (n <= 1 || pnet->queue_fill < 2)
         return n;
 
@@ -208,7 +146,8 @@ static int narrow_clk6_candidates(const bredr_piconet_t *pnet,
     {
         unsigned int idx =
             (pnet->queue_head - 1u - i + 2u * BREDR_PICONET_QUEUE_SIZE) % BREDR_PICONET_QUEUE_SIZE;
-        const bredr_packet_t *hist = &pnet->queue[idx];
+        const decoded_packet_t *hist_packet = &pnet->queue[idx];
+        const bredr_packet_t *hist = &hist_packet->u.bredr;
 
         /* Stop if this packet is too old. */
         if ((cur_clk - hist->rx_clk_1600) > CLK1_6_HISTORY_CUTOFF_CLK1600)
@@ -240,34 +179,26 @@ static int narrow_clk6_candidates(const bredr_piconet_t *pnet,
 }
 
 static void try_uap_acquisition(bredr_piconet_store_entry_t *entry,
-                                const bredr_packet_t *pkt,
-                                int channel,
+                                const decoded_packet_t *packet,
                                 uint32_t clkn)
 {
+    const bredr_packet_t *pkt = &packet->u.bredr;
     bredr_piconet_t *pnet = entry->pnet;
 
     if (!pnet || !pkt->has_header || pkt->ac_errors > BREDR_AC_ERRORS_DEFAULT)
         return;
     if (pnet->uap_found && pnet->clk_known)
         return;
-    if (!entry->bpn)
+    if (!entry->recovery)
         return;
 
-    btbb_packet *bp = btbb_packet_from_bredr(pkt, channel, clkn);
-    if (!bp)
-        return;
-
-    btbb_process_packet(bp, entry->bpn);
-
-    if (btbb_piconet_get_flag(entry->bpn, BTBB_UAP_VALID))
+    bredr_recovery_result_t result = {0};
+    if (bredr_recovery_process_packet(entry->recovery, pkt, (int)packet->meta.channel_index, clkn, &result))
     {
-        uint8_t uap = btbb_piconet_get_uap(entry->bpn);
-
+        uint8_t uap = result.uap;
+        uint8_t btbb_clk6 = result.clk6_hint;
         if (!pnet->uap_found)
             bredr_piconet_set_uap_only(pnet, uap);
-
-        int clk_off = btbb_piconet_get_clk_offset(entry->bpn);
-        uint8_t btbb_clk6 = (uint8_t)(((uint32_t)clk_off) & 0x3fu);
 
         /* Collect all CLK1-6 values that produce a valid HEC for this packet. */
         int valid_clk[64];
@@ -279,7 +210,7 @@ static void try_uap_acquisition(bredr_piconet_store_entry_t *entry,
         }
 
         /* Narrow the candidates using historical packets in the ring buffer. */
-        valid_n = narrow_clk6_candidates(pnet, pkt, uap, valid_clk, valid_n);
+        valid_n = narrow_clk6_candidates(pnet, packet, uap, valid_clk, valid_n);
 
         if (valid_n == 1)
         {
@@ -311,8 +242,6 @@ static void try_uap_acquisition(bredr_piconet_store_entry_t *entry,
         /* valid_n == 0: UAP may be wrong — leave state unchanged and let btbb
          * accumulate more packets before trying again. */
     }
-
-    btbb_packet_unref(bp);
 }
 
 /* ---------------------------------------------------------------------------
@@ -329,7 +258,7 @@ void bredr_piconet_store_init(bredr_piconet_store_t *store)
     store->entries = (bredr_piconet_store_entry_t *)calloc(
         store->capacity, sizeof(*store->entries));
 
-    btbb_init(BREDR_AC_ERRORS_DEFAULT);
+    bredr_recovery_global_init(BREDR_AC_ERRORS_DEFAULT);
 }
 
 void bredr_piconet_store_free(bredr_piconet_store_t *store)
@@ -339,8 +268,7 @@ void bredr_piconet_store_free(bredr_piconet_store_t *store)
 
     for (size_t i = 0; i < store->count; i++)
     {
-        if (store->entries[i].bpn)
-            btbb_piconet_unref(store->entries[i].bpn);
+        bredr_recovery_state_destroy(store->entries[i].recovery);
         free(store->entries[i].pnet);
     }
 
@@ -349,12 +277,12 @@ void bredr_piconet_store_free(bredr_piconet_store_t *store)
 }
 
 bredr_piconet_t *bredr_piconet_store_add_packet(bredr_piconet_store_t *store,
-                                                const bredr_packet_t *pkt,
-                                                int channel,
+                                                const decoded_packet_t *packet,
                                                 uint32_t clkn)
 {
-    if (!store || !pkt || !store->entries)
+    if (!store || !packet || packet->protocol != PROTO_BREDR || !store->entries)
         return NULL;
+    const bredr_packet_t *pkt = &packet->u.bredr;
 
     uint32_t lap = pkt->lap & 0xFFFFFFu;
 
@@ -369,25 +297,20 @@ bredr_piconet_t *bredr_piconet_store_add_packet(bredr_piconet_store_t *store,
      *
      * Guard against occasional non-monotonic timestamp regressions by only
      * applying the idle test when clkn advances. */
-    if (entry->has_last_clkn && entry->bpn)
+    if (entry->has_last_clkn && entry->recovery)
     {
         if (clkn >= entry->last_clkn)
         {
             uint32_t idle = clkn - entry->last_clkn;
             if (idle > BTBB_LAP_IDLE_RESET_CLKN)
-            {
-                btbb_piconet_unref(entry->bpn);
-                entry->bpn = btbb_piconet_new();
-                if (entry->bpn)
-                    btbb_init_piconet(entry->bpn, lap);
-            }
+                bredr_recovery_state_reset(entry->recovery, lap);
         }
     }
     entry->last_clkn = clkn;
     entry->has_last_clkn = 1;
 
-    bredr_piconet_add_packet(entry->pnet, pkt);
-    try_uap_acquisition(entry, pkt, channel, clkn);
+    bredr_piconet_add_packet(entry->pnet, packet);
+    try_uap_acquisition(entry, packet, clkn);
 
     return entry->pnet;
 }

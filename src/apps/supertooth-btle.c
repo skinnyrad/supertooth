@@ -1,19 +1,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include <complex.h>
 #include <unistd.h>
 #include <getopt.h>
 #include <signal.h>
-#include <libhackrf/hackrf.h>
-#include <liquid/liquid.h>
-#include <time.h>
-#include <math.h>
 #include <inttypes.h>
 #include <string.h>
-#include <sys/time.h>
-#include "hackrf.h"
 #include "ble_phy.h"
+#include "receiver_session.h"
 
 // BTLE Advertising Channel 37 constants
 #define BTLE_CH37_INDEX 37         // BLE channel index for 2.402 GHz
@@ -23,35 +17,14 @@
 #define BTLE_CH39_INDEX 39         // BLE channel index for 2.480 GHz
 #define BTLE_CH39_FREQ 2480e6      // Channel 39 frequency (2.480 GHz)
 #define ADVERTISING_AA 0x8E89BED6U // BTLE advertising access address
+#define BTLE_SAMPLE_RATE_HZ 2000000u
 
-#define BTLE_SYMBOL_RATE 1e6 // 1 Mbps BTLE symbol rate
-#define SAMPLES_PER_SYMBOL 2 // 2 MHz / 1 Mbps = 2 samples/symbol
-
-// HackRF parameters
-#define LNA_GAIN 32        // LNA gain
-#define VGA_GAIN 32        // VGA gain
-#define BUFFER_SIZE 262144 // HackRF transfer buffer size (bytes)
-#define SAMPLE_RATE 2e6    // 2 MHz sample rate
-
-// BTLE demodulation objects
-static cpfskdem demod;
-
-// BLE PHY processor
-static ble_channel_processor_t ble_proc;
-
-// Processing buffers
-static float complex raw[BUFFER_SIZE / 2]; // complex samples
-
-// RSSI tracking state
-static unsigned long long total_samples = 0;
-static long long pkt_start_abs = -1;
-static ble_status_t prev_status = BLE_SEARCHING;
 static unsigned long g_packet_count = 0;
 static int g_debug = 0;
-static unsigned long g_truncated_callback_blocks = 0;
 static volatile sig_atomic_t g_stop = 0;
 static uint8_t g_ble_channel = BTLE_CH37_INDEX;
 static uint64_t g_ble_freq_hz = (uint64_t)BTLE_CH37_FREQ;
+static receiver_session_t *g_session = NULL;
 
 typedef enum
 {
@@ -65,6 +38,8 @@ static void handle_sigint(int sig)
 {
     (void)sig;
     g_stop = 1;
+    if (g_session)
+        receiver_session_request_stop(g_session);
 }
 
 static const char *ble_pdu_type_name(uint8_t pdu_type)
@@ -178,27 +153,28 @@ static void print_usage(const char *argv0)
 }
 
 static void print_ble_packet_full(unsigned long packet_no,
-                                  const ble_packet_t *pkt,
-                                  float rssi_dbr,
-                                  unsigned long long sample_index)
+                                  const decoded_packet_t *packet)
 {
+    const ble_packet_t *pkt = &packet->u.ble;
+    const rx_metadata_t *meta = &packet->meta;
     printf("\n------------------ Packet #%lu --------------------\n", packet_no);
     printf("[RX Info]\n");
     printf("Sample Index : %" PRIu64 " (%u Msps master clock)\n",
-           sample_index, (unsigned int)(SAMPLE_RATE / 1000000u));
+           meta->start_sample, (unsigned int)(BTLE_SAMPLE_RATE_HZ / 1000000u));
     printf("Type         : BLE\n");
     printf("Frequency    : %u MHz (Channel %u)\n",
-           (unsigned int)(g_ble_freq_hz / 1000000u), g_ble_channel);
-    printf("RSSI         : %.2f dBr\n", rssi_dbr);
+           (unsigned int)(meta->center_frequency_hz / 1000000u), meta->channel_index);
+    printf("RSSI         : %.2f dBr\n", meta->rssi_dbr);
     printf("\n");
     ble_print_packet(pkt);
     printf("--------------------------------------------------\n");
 }
 
 static void print_ble_packet_summary(unsigned long packet_no,
-                                     const ble_packet_t *pkt,
-                                     float rssi_dbr)
+                                     const decoded_packet_t *packet)
 {
+    const ble_packet_t *pkt = &packet->u.ble;
+    const rx_metadata_t *meta = &packet->meta;
     uint8_t pdu_type = pkt->pdu[0] & 0x0Fu;
     const char *pdu_name = ble_pdu_type_name(pdu_type);
     const uint8_t *addr = NULL;
@@ -212,97 +188,23 @@ static void print_ble_packet_summary(unsigned long packet_no,
     printf("pkt=%-6lu type=BLE pdu=%-14s ch=%02u addr=%s len=%-3u crc=%s rssi=%.1f\n",
            packet_no,
            pdu_name,
-           g_ble_channel,
+           meta->channel_index,
            addr_buf,
            pkt->pdu[1],
            ble_verify_crc(pkt) ? "PASS" : "FAIL",
-           rssi_dbr);
+           meta->rssi_dbr);
 }
 
-// --- HackRF RX Callback ------------------------------------------------------
-
-int btle_rx_cb(hackrf_transfer *transfer)
+static void handle_ble_packet(const decoded_packet_t *packet,
+                             void *user)
 {
-    if (g_stop)
-        return -1;
-
-    // HackRF provides interleaved I/Q samples as int8_t.
-    int8_t *samples = (int8_t *)transfer->buffer;
-    unsigned int num_iq_bytes = transfer->valid_length;
-    unsigned int num_complex = num_iq_bytes / 2; // I/Q pair per complex sample
-
-    if (num_complex > (BUFFER_SIZE / 2))
-    {
-        g_truncated_callback_blocks++;
-        if (g_debug)
-            fprintf(stderr, "[debug] callback buffer truncated to %u complex samples (total=%lu)\n",
-                    (unsigned int)(BUFFER_SIZE / 2), g_truncated_callback_blocks);
-        num_complex = BUFFER_SIZE / 2;
-    }
-
-    // Record the absolute sample index of this buffer's first sample.
-    unsigned long long buf_start = total_samples;
-    total_samples += num_complex;
-
-    // Convert int8_t samples to complex float range [-1.0, 1.0].
-    for (unsigned int i = 0; i < num_complex; i++)
-    {
-        float i_sample = samples[2 * i] / 128.0f;
-        float q_sample = samples[2 * i + 1] / 128.0f;
-        raw[i] = i_sample + q_sample * _Complex_I;
-    }
-
-    // Demodulate BTLE signal and push bits to the BLE PHY processor
-    unsigned int num_bits = num_complex / SAMPLES_PER_SYMBOL;
-    for (unsigned int s = 0; s < num_bits; s++)
-    {
-        unsigned int sample_index = s * SAMPLES_PER_SYMBOL;
-        unsigned int sym = cpfskdem_demodulate(demod, &raw[sample_index]);
-        uint8_t bit = (uint8_t)(sym & 0x01);
-
-        // Push the bit to the BLE PHY processor
-        ble_status_t status = ble_push_bit(&ble_proc, bit);
-
-        // Record the sample index when preamble+AA is first matched.
-        if (prev_status == BLE_SEARCHING && status == BLE_COLLECTING)
-            pkt_start_abs = (long long)(buf_start + sample_index);
-        prev_status = status;
-
-        if (status == BLE_VALID_PACKET)
-        {
-            // Compute relative RSSI (dBr): max instantaneous power over packet samples.
-            float max_power = 0.0f;
-            if (pkt_start_abs >= 0)
-            {
-                long long rel_start = pkt_start_abs - (long long)buf_start;
-                unsigned int i_start = (rel_start < 0) ? 0 : (unsigned int)rel_start;
-                unsigned int i_end = (s + 1) * SAMPLES_PER_SYMBOL;
-                for (unsigned int i = i_start; i < i_end && i < num_complex; i++)
-                {
-                    float power = crealf(raw[i]) * crealf(raw[i]) +
-                                  cimagf(raw[i]) * cimagf(raw[i]);
-                    if (power > max_power)
-                        max_power = power;
-                }
-            }
-            float rssi_dbr = (max_power > 0.0f) ? 10.0f * log10f(max_power) : 0.0f;
-
-            // Retrieve and print the completed packet
-            ble_packet_t pkt;
-            if (ble_get_packet(&ble_proc, &pkt) == 0)
-            {
-                unsigned long long abs_sample_index = buf_start + sample_index;
-                unsigned long packet_no = ++g_packet_count;
-                if (g_output_mode == OUTPUT_MODE_SUMMARY)
-                    print_ble_packet_summary(packet_no, &pkt, rssi_dbr);
-                else
-                    print_ble_packet_full(packet_no, &pkt, rssi_dbr, abs_sample_index);
-                fflush(stdout);
-            }
-        }
-    }
-
-    return g_stop ? -1 : 0;
+    (void)user;
+    unsigned long packet_no = ++g_packet_count;
+    if (g_output_mode == OUTPUT_MODE_SUMMARY)
+        print_ble_packet_summary(packet_no, packet);
+    else
+        print_ble_packet_full(packet_no, packet);
+    fflush(stdout);
 }
 
 // --- Main --------------------------------------------------------------------
@@ -354,81 +256,45 @@ int main(int argc, char *argv[])
     printf("Channel     : %u (%.3f MHz)\n", g_ble_channel, (double)g_ble_freq_hz / 1e6);
     printf("View mode   : %s\n", g_output_mode == OUTPUT_MODE_SUMMARY ? "summary" : "full");
     printf("Debug       : %s\n", g_debug ? "enabled" : "disabled");
-
-    // Initialize BLE PHY processor for selected advertising channel
-    ble_processor_init(&ble_proc, g_ble_channel);
-
-    // Create BTLE GFSK demodulator (1 bit/symbol, h ~ 0.5, etc.).
-    unsigned int bps = 1;                                         // bits/symbol
-    float h = 0.5f;                                               // modulation index
-    unsigned int k = SAMPLES_PER_SYMBOL;                          // samples/symbol
-    unsigned int m = 3;                                           // filter delay (symbols)
-    float BT = 0.5f;                                              // BT product
-    demod = cpfskdem_create(bps, h, k, m, BT, LIQUID_CPFSK_GMSK); // generic CPFSK GMSK
-
-    if (!demod)
-    {
-        fprintf(stderr, "Error: Failed to create cpfskdem object.\n");
-        return EXIT_FAILURE;
-    }
-
     signal(SIGINT, handle_sigint);
 
-    // HackRF setup and start RX.
-    int result;
-    hackrf_device *device = NULL;
-
-    result = hackrf_connect(&device);
-    if (result != HACKRF_SUCCESS)
-    {
-        fprintf(stderr, "hackrf_connect() failed: %s\n", hackrf_error_name(result));
-        cpfskdem_destroy(demod);
-        return EXIT_FAILURE;
-    }
-
-    hackrf_config_t config = {
+    receiver_btle_config_t config = {
+        .ble_channel = g_ble_channel,
         .lo_freq_hz = g_ble_freq_hz,
-        .sample_rate = SAMPLE_RATE,
-        .lna_gain = LNA_GAIN,
-        .vga_gain = VGA_GAIN,
+        .debug = g_debug,
     };
-
-    result = hackrf_configure(device, &config);
-    if (result != HACKRF_SUCCESS)
+    receiver_btle_callbacks_t callbacks = {
+        .on_packet = handle_ble_packet,
+        .user = NULL,
+    };
+    receiver_btle_stats_t stats;
+    g_session = receiver_session_create();
+    if (!g_session)
     {
-        fprintf(stderr, "hackrf_configure() failed: %s\n", hackrf_error_name(result));
-        hackrf_disconnect(device);
-        cpfskdem_destroy(demod);
-        return EXIT_FAILURE;
-    }
-
-    result = hackrf_start_rx(device, btle_rx_cb, NULL);
-    if (result != HACKRF_SUCCESS)
-    {
-        fprintf(stderr, "hackrf_start_rx() failed: %s\n", hackrf_error_name(result));
-        hackrf_disconnect(device);
-        cpfskdem_destroy(demod);
+        fprintf(stderr, "Failed to create receiver session.\n");
         return EXIT_FAILURE;
     }
 
     printf("Monitoring BTLE Channel %u (%.3f GHz) for advertising packets...\n",
            g_ble_channel, (double)g_ble_freq_hz / 1e9);
     printf("Press Ctrl+C to exit\n\n");
-
-    while (!g_stop)
-        sleep(1);
-    hackrf_stop_rx(device);
-    hackrf_disconnect(device);
-    cpfskdem_destroy(demod);
+    int result = receiver_session_run_btle(g_session, &config, &callbacks, &stats);
+    receiver_session_destroy(g_session);
+    g_session = NULL;
+    if (result != 0)
+    {
+        fprintf(stderr, "BTLE receiver failed.\n");
+        return EXIT_FAILURE;
+    }
 
     printf("\n\n=== Session Summary ===\n");
     printf("  Output mode    : %s\n", g_output_mode == OUTPUT_MODE_SUMMARY ? "summary" : "full");
     printf("  Debug mode     : %s\n", g_debug ? "enabled" : "disabled");
     printf("  BLE channel    : %u (%.3f MHz)\n", g_ble_channel, (double)g_ble_freq_hz / 1e6);
-    printf("  Total samples  : %" PRIu64 "\n", total_samples);
+    printf("  Total samples  : %" PRIu64 "\n", stats.total_samples);
     printf("  Total packets  : %lu\n", g_packet_count);
     printf("\n=== Debug Summary ===\n");
-    printf("  Truncated callback blocks : %lu\n", g_truncated_callback_blocks);
+    printf("  Truncated callback blocks : %lu\n", stats.truncated_callback_blocks);
 
     return 0;
 }

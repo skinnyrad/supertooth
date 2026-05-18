@@ -48,7 +48,6 @@
 #include "../src/bredr_phy.h"
 #include "../src/bredr_piconet.h"
 #include "../src/bredr_piconet_store.h"
-#include "../src/rx_packet.h"
 
 /* -------------------------------------------------------------------------
  * RF / DSP constants
@@ -180,23 +179,22 @@ static const char *tracking_state_desc(int tracking_state)
     return "tracking";
 }
 
-static void print_bredr_packet_report(const rx_packet_t *rx_pkt,
-                                      const bredr_packet_t *pkt,
+static void print_bredr_packet_report(const bredr_packet_t *pkt,
                                       const bredr_piconet_t *pnet)
 {
-    if (!rx_pkt || !pkt)
+    if (!pkt)
         return;
 
-    unsigned int freq_mhz = rx_pkt->frequency_hz / 1000000u;
-    unsigned int channel = (freq_mhz >= 2402u) ? (freq_mhz - 2402u) : 0u;
-    int is_data = (rx_pkt->type == RX_PACKET_BREDR_DATA);
+    unsigned int freq_mhz = 2402u + (unsigned int)g_channel;
+    unsigned int channel = (unsigned int)g_channel;
+    int is_data = pkt->has_header != 0;
 
     printf("\n------------------ Packet #%lu --------------------\n", g_total_packets);
     printf("[RX Info]\n");
-    printf("Sample Index : %" PRIu64 " (20 Msps master clock)\n", rx_pkt->sample_index);
+    printf("Sample Index : %" PRIu64 " (20 Msps master clock)\n", pkt->rx_clk_ref);
     printf("Type         : BR/EDR\n");
     printf("Frequency    : %u MHz (Channel %u)\n", freq_mhz, channel);
-    printf("RSSI         : %.2f dBr\n", rx_pkt->rssi);
+    printf("RSSI         : %.2f dBr\n", pkt->rssi);
 
     printf("\n[%s Packet Info]\n",
            is_data ? "BR/EDR Data" : "BR/EDR Inquiry");
@@ -347,15 +345,7 @@ static int rx_callback(hackrf_transfer *transfer)
         else
             g_id_packets++;
 
-        rx_packet_t rx_pkt = {
-            .sample_index = pkt.rx_clk_ref,
-            .type = pkt.has_header ? RX_PACKET_BREDR_DATA : RX_PACKET_BREDR_INQUIRY,
-            .frequency_hz = (uint32_t)(2402u + (uint32_t)g_channel) * 1000000u,
-            .rssi = pkt.rssi,
-            .phy_packet = &pkt
-        };
-
-        print_bredr_packet_report(&rx_pkt, &pkt, pnet);
+        print_bredr_packet_report(&pkt, pnet);
 
         fflush(stdout);
     }

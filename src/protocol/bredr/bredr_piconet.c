@@ -21,6 +21,7 @@
  */
 
 #include "bredr_piconet.h"
+#include "bredr_header_codec.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -177,13 +178,15 @@ void bredr_piconet_set_rssi_averaging(unsigned int window)
 }
 
 void bredr_piconet_add_packet(bredr_piconet_t *pnet,
-                              const bredr_packet_t *pkt)
+                              const decoded_packet_t *packet)
 {
-    if (!pnet || !pkt)
+    if (!pnet || !packet || packet->protocol != PROTO_BREDR)
         return;
+    const bredr_packet_t *pkt = &packet->u.bredr;
+    const rx_metadata_t *meta = &packet->meta;
 
     /* Copy into ring buffer. */
-    pnet->queue[pnet->queue_head] = *pkt;
+    pnet->queue[pnet->queue_head] = *packet;
     pnet->queue_head = (pnet->queue_head + 1u) % BREDR_PICONET_QUEUE_SIZE;
     if (pnet->queue_fill < BREDR_PICONET_QUEUE_SIZE)
         pnet->queue_fill++;
@@ -197,10 +200,10 @@ void bredr_piconet_add_packet(bredr_piconet_t *pnet,
     int has_active_track = (pnet->uap_found && pnet->clk_known && pnet->tracking_state > 0);
 
     /* Before track lock, keep only latest aggregate RSSI. */
-    if (!has_active_track && pkt->rssi != 0.0f)
+    if (!has_active_track && meta->rssi_dbr != 0.0f)
     {
         pnet->combined_rssi =
-            update_rssi_value(pnet->combined_rssi, pnet->combined_rssi_seen, pkt->rssi);
+            update_rssi_value(pnet->combined_rssi, pnet->combined_rssi_seen, meta->rssi_dbr);
         pnet->combined_rssi_seen = 1;
     }
 
@@ -212,7 +215,7 @@ void bredr_piconet_add_packet(bredr_piconet_t *pnet,
     int hec_ok = 0;
     if (pkt->ac_errors <= 1u)
         hec_ok = update_clock(pnet, pkt);
-    if (!hec_ok || pkt->rssi == 0.0f)
+    if (!hec_ok || meta->rssi_dbr == 0.0f)
         return;
 
     /* rx_clk_1600 is slot clock (CLKN >> 1), so bit0 == CLK1 parity.
@@ -220,7 +223,7 @@ void bredr_piconet_add_packet(bredr_piconet_t *pnet,
     if ((pkt->rx_clk_1600 & 1u) == 0u)
     {
         pnet->master_rssi =
-            update_rssi_value(pnet->master_rssi, pnet->master_rssi_seen, pkt->rssi);
+            update_rssi_value(pnet->master_rssi, pnet->master_rssi_seen, meta->rssi_dbr);
         pnet->master_rssi_seen = 1;
     }
     else
@@ -229,7 +232,7 @@ void bredr_piconet_add_packet(bredr_piconet_t *pnet,
         bredr_decode_header_bits(pkt, pnet->central_clk_1_6, bits);
         uint8_t lt = (bits[0]) | (uint8_t)(bits[1] << 1) | (uint8_t)(bits[2] << 2);
         pnet->slave_rssi[lt] =
-            update_rssi_value(pnet->slave_rssi[lt], pnet->slave_rssi_seen[lt], pkt->rssi);
+            update_rssi_value(pnet->slave_rssi[lt], pnet->slave_rssi_seen[lt], meta->rssi_dbr);
         pnet->slave_rssi_seen[lt] = 1;
     }
 }
