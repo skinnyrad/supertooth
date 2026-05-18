@@ -58,15 +58,14 @@ brew install cmake pkg-config hackrf liquid-dsp libbtbb
 From repository root:
 
 ```bash
-mkdir build
-cmake ..
-make
+cmake -S . -B build
+cmake --build build
 ```
 
 To build the examples run:
 
 ```bash
-make examples
+cmake --build build --target examples
 ```
 
 Output binaries are in:
@@ -103,24 +102,35 @@ Main binaries (require HackRF hardware):
 --ble-channel 37|38|39
 ```
 
-## Basic architecture
+## Architecture
 
-### Signal processing runtimes (`src/`)
+Supertooth is organized as a layered core library with thin CLI entrypoints.
 
-- `supertooth-btle.c`: HackRF callback → I/Q normalization → Liquid-DSP GFSK demodulation → `ble_push_bit()`.
-- `supertooth-rx.c`: wideband capture across configurable BR/EDR channel span; per-channel NCO mixing + FIR decimation + CPFSK demod; packet/piconet handling.
-- `supertooth-hybrid.c`: combined BR/EDR channel workers plus BLE channel 37 worker using shared buffer generations.
+### Source layout
 
-### Protocol decoders
+```text
+src/
+  apps/            CLI binaries and presentation
+  service/         session API and runtime orchestration
+  dsp/             channelization, demodulation, sample-processing callbacks
+  radio/           HackRF integration
+  models/          shared packet and receive metadata types
+  protocol/
+    ble/           BLE framing, codec helpers, assigned-number helpers
+    bredr/         BR/EDR framing, codec helpers, tracking, recovery
+```
 
-- `ble_phy.c/h`: per-channel BLE push-bit processor (preamble/AA detect, collect, dewhiten, CRC verify, packet API).
-- `bredr_phy.c/h`: BR/EDR push-bit processor (access-code detect, FEC header decode, payload collection).
-- `bredr_piconet.c/h`: per-piconet tracking state and packet ring.
-- `bredr_piconet_store.c/h`: LAP-keyed piconet store with libbtbb-assisted UAP/clock recovery.
+### Main layers
 
-### Hardware abstraction
+- `src/apps/`: `supertooth-rx`, `supertooth-btle`, and `supertooth-hybrid` user-facing binaries.
+- `src/service/`: reusable library boundary built around `receiver_session`.
+- `src/dsp/`: mode-specific DSP implementations extracted from session orchestration.
+- `src/radio/`: HackRF lifecycle and configuration wrapper.
+- `src/models/`: `decoded_packet_t` and `rx_metadata_t`.
+- `src/protocol/ble/`: BLE framing and decode support.
+- `src/protocol/bredr/`: BR/EDR framing, measurement, tracking, and recovery support.
 
-- `hackrf.c/h`: wraps HackRF lifecycle and common RF parameter configuration.
+For a broader description of the current architecture, see `docs/architecture.md`.
 
 ### Examples and tools
 
