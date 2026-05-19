@@ -141,11 +141,12 @@ endif()
 add_library(supertooth_protocol_core STATIC
     models/packet_models.h
     models/rx_metadata.h
-    models/rssi_measurements.c models/rssi_measurements.h
+    protocol/ble/ble_display.c protocol/ble/ble_display.h
     protocol/ble/ble_codec.c protocol/ble/ble_codec.h
     protocol/ble/ble_framer.c protocol/ble/ble_framer.h
     protocol/ble/ble_phy.c protocol/ble/ble_phy.h
     protocol/ble/bt_assigned_numbers.c protocol/ble/bt_assigned_numbers.h
+    protocol/bredr/bredr_display.c protocol/bredr/bredr_display.h
     protocol/bredr/bredr_header_codec.c protocol/bredr/bredr_header_codec.h
     protocol/bredr/bredr_phy.c protocol/bredr/bredr_phy.h
     protocol/bredr/bredr_piconet.c protocol/bredr/bredr_piconet.h
@@ -182,6 +183,8 @@ add_library(supertooth_service STATIC
     service/receiver_session.h
     service/receiver_session_internal.h
     dsp/receiver_dsp.h
+    dsp/rssi_measurements.c
+    dsp/rssi_measurements.h
     dsp/receiver_ble_dsp.c
     dsp/receiver_bredr_dsp.c
     dsp/receiver_hybrid_dsp.c
@@ -202,8 +205,6 @@ target_include_directories(supertooth_service PUBLIC
 add_library(supertooth_app_support STATIC
     apps/app_common.c
     apps/app_common.h
-    apps/ble_display.c
-    apps/ble_display.h
 )
 
 target_link_libraries(supertooth_app_support

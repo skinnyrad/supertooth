@@ -1,5 +1,5 @@
 /**
- * @file rssi_measurements.h
+ * @file dsp/rssi_measurements.h
  * @brief Shared receive-side RSSI measurement helpers.
  */
 

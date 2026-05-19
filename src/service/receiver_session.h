@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "bredr_display.h"
 #include "ble_phy.h"
 #include "packet_models.h"
 #include "rx_metadata.h"
@@ -68,22 +69,7 @@ typedef struct
     unsigned int bredr_channel_count;
 } receiver_hybrid_stats_t;
 
-typedef struct
-{
-    uint32_t lap;
-    int uap_found;
-    uint8_t uap;
-    int clk_known;
-    uint8_t central_clk_1_6;
-    int tracking_state;
-    unsigned long total_packets;
-    int combined_rssi_seen;
-    float combined_rssi;
-    int master_rssi_seen;
-    float master_rssi;
-    int slave_rssi_seen[8];
-    float slave_rssi[8];
-} receiver_bredr_piconet_snapshot_t;
+typedef bredr_piconet_snapshot_t receiver_bredr_piconet_snapshot_t;
 
 typedef void (*receiver_ble_packet_fn)(const decoded_packet_t *packet,
                                        void *user);

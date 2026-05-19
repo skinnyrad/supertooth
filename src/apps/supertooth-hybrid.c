@@ -7,6 +7,7 @@
 
 #include "app_common.h"
 #include "ble_display.h"
+#include "bredr_display.h"
 #include "ble_phy.h"
 #include "receiver_session.h"
 
@@ -40,21 +41,7 @@ static void print_ble_packet_full(unsigned long packet_no,
 static void print_ble_packet_summary(unsigned long packet_no,
                                      const decoded_packet_t *packet)
 {
-    const ble_packet_t *pkt = &packet->u.ble;
-    const rx_metadata_t *meta = &packet->meta;
-    uint8_t pdu_type = pkt->pdu[0] & 0x0Fu;
-    const char *pdu_name = app_ble_pdu_type_name(pdu_type);
-    const uint8_t *addr = NULL;
-    char addr_buf[18];
-
-    if (app_ble_primary_addr(pkt, &addr))
-        app_format_ble_addr(addr_buf, addr);
-    else
-        snprintf(addr_buf, sizeof(addr_buf), "--");
-
-    printf("pkt=%-6lu type=BLE   pdu=%-14s ch=%02u addr=%s len=%-3u crc=%s rssi=%.1f\n",
-           packet_no, pdu_name, meta->channel_index, addr_buf, pkt->pdu[1],
-           ble_verify_crc(pkt) ? "PASS" : "FAIL", meta->rssi_dbr);
+    ble_print_packet_summary_line(packet_no, &packet->u.ble, &packet->meta);
 }
 
 static void print_bredr_packet_full(unsigned long packet_no,
@@ -71,28 +58,7 @@ static void print_bredr_packet_full(unsigned long packet_no,
     printf("Frequency    : %u MHz (Channel %u)\n",
            (unsigned int)(meta->center_frequency_hz / 1000000u), meta->channel_index);
     printf("RSSI         : %.2f dBr\n\n", meta->rssi_dbr);
-    printf("[BR/EDR Packet Info]\n");
-    printf("LAP          : 0x%06" PRIX32 "\n", pkt->lap & 0xFFFFFFu);
-    printf("AC Errors    : %u\n", pkt->ac_errors);
-    if (pkt->has_header)
-        printf("HEADER       : 0x%014" PRIX64 "\n",
-               pkt->header_raw & 0x003FFFFFFFFFFFFFull);
-    else
-        printf("HEADER       : (none — shortened access code)\n");
-    if (pnet)
-    {
-        printf("\n[Piconet Info]\n");
-        printf("Packets      : %lu\n", pnet->total_packets);
-        if (pnet->uap_found)
-            printf("UAP          : 0x%02X\n", pnet->uap);
-        else
-            printf("UAP          : 0x??\n");
-        if (pnet->clk_known)
-            printf("CLK1-6       : %u\n", pnet->central_clk_1_6);
-        else
-            printf("CLK1-6       : ??\n");
-        printf("Tracking     : %d\n", pnet->tracking_state);
-    }
+    bredr_print_packet_details(pkt, pnet);
     printf("--------------------------------------------------\n");
 }
 
@@ -100,29 +66,7 @@ static void print_bredr_packet_summary(unsigned long packet_no,
                                        const decoded_packet_t *packet,
                                        const receiver_bredr_piconet_snapshot_t *pnet)
 {
-    const bredr_packet_t *pkt = &packet->u.bredr;
-    const rx_metadata_t *meta = &packet->meta;
-    char uap_buf[8];
-    char clk_buf[8];
-
-    if (pnet && pnet->uap_found)
-        snprintf(uap_buf, sizeof(uap_buf), "%02X", pnet->uap);
-    else
-        snprintf(uap_buf, sizeof(uap_buf), "??");
-    if (pnet && pnet->clk_known)
-        snprintf(clk_buf, sizeof(clk_buf), "%02u", pnet->central_clk_1_6);
-    else
-        snprintf(clk_buf, sizeof(clk_buf), "??");
-
-    printf("pkt=%-6lu type=BREDR lap=%06" PRIX32 " uap=%s ch=%02u ac=%u clk=%s track=%d rssi=%.1f\n",
-           packet_no,
-           pkt->lap & 0xFFFFFFu,
-           uap_buf,
-           meta->channel_index,
-           pkt->ac_errors,
-           clk_buf,
-           pnet ? pnet->tracking_state : -1,
-           meta->rssi_dbr);
+    bredr_print_packet_summary_line(packet_no, &packet->u.bredr, pnet, &packet->meta);
 }
 
 static void print_usage(const char *argv0)

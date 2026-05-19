@@ -81,26 +81,7 @@ static void print_ble_packet_full(unsigned long packet_no,
 static void print_ble_packet_summary(unsigned long packet_no,
                                      const decoded_packet_t *packet)
 {
-    const ble_packet_t *pkt = &packet->u.ble;
-    const rx_metadata_t *meta = &packet->meta;
-    uint8_t pdu_type = pkt->pdu[0] & 0x0Fu;
-    const char *pdu_name = app_ble_pdu_type_name(pdu_type);
-    const uint8_t *addr = NULL;
-    char addr_buf[18];
-
-    if (app_ble_primary_addr(pkt, &addr))
-        app_format_ble_addr(addr_buf, addr);
-    else
-        snprintf(addr_buf, sizeof(addr_buf), "--");
-
-    printf("pkt=%-6lu type=BLE pdu=%-14s ch=%02u addr=%s len=%-3u crc=%s rssi=%.1f\n",
-           packet_no,
-           pdu_name,
-           meta->channel_index,
-           addr_buf,
-           pkt->pdu[1],
-           ble_verify_crc(pkt) ? "PASS" : "FAIL",
-           meta->rssi_dbr);
+    ble_print_packet_summary_line(packet_no, &packet->u.ble, &packet->meta);
 }
 
 static void handle_ble_packet(const decoded_packet_t *packet,
