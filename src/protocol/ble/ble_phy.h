@@ -72,6 +72,24 @@ extern "C"
 /** BLE advertising access address (Bluetooth Core Spec Vol 6, Part B, §2.1.2). */
 #define BLE_ADVERTISING_AA 0x8E89BED6UL
 
+/** BLE advertising channel 37 index. */
+#define BLE_CH37_INDEX 37u
+
+/** BLE advertising channel 38 index. */
+#define BLE_CH38_INDEX 38u
+
+/** BLE advertising channel 39 index. */
+#define BLE_CH39_INDEX 39u
+
+/** BLE advertising channel 37 center frequency in Hz. */
+#define BLE_CH37_FREQ_HZ 2402000000u
+
+/** BLE advertising channel 38 center frequency in Hz. */
+#define BLE_CH38_FREQ_HZ 2426000000u
+
+/** BLE advertising channel 39 center frequency in Hz. */
+#define BLE_CH39_FREQ_HZ 2480000000u
+
     /* ---------------------------------------------------------------------------
      * ble_packet_t — a fully decoded BLE advertising packet
      * ---------------------------------------------------------------------------*/

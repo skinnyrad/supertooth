@@ -182,10 +182,10 @@ add_library(supertooth_service STATIC
     service/receiver_session.h
     service/receiver_session_internal.h
     dsp/receiver_dsp.h
-    dsp/receiver_btle_dsp.c
+    dsp/receiver_ble_dsp.c
     dsp/receiver_bredr_dsp.c
     dsp/receiver_hybrid_dsp.c
-    service/receiver_session_btle.c
+    service/receiver_session_ble.c
     service/receiver_session_bredr.c
     service/receiver_session_hybrid.c
 )
@@ -199,11 +199,27 @@ target_include_directories(supertooth_service PUBLIC
     ${SUPERTOOTH_SOURCE_INCLUDE_DIRS}
 )
 
+add_library(supertooth_app_support STATIC
+    apps/app_common.c
+    apps/app_common.h
+    apps/ble_display.c
+    apps/ble_display.h
+)
+
+target_link_libraries(supertooth_app_support
+    supertooth_service
+)
+
+target_include_directories(supertooth_app_support PUBLIC
+    ${SUPERTOOTH_SOURCE_INCLUDE_DIRS}
+)
+
 add_executable(supertooth-rx
     apps/supertooth-rx.c
 )
 
 target_link_libraries(supertooth-rx 
+    supertooth_app_support
     supertooth_service
 )
 
@@ -211,16 +227,17 @@ target_include_directories(supertooth-rx PRIVATE
     ${SUPERTOOTH_SOURCE_INCLUDE_DIRS}
 )
 
-# Add supertooth-btle executable (BTLE advertising packet detector)
-add_executable(supertooth-btle
-    apps/supertooth-btle.c
+# Add supertooth-ble executable (BLE advertising packet detector)
+add_executable(supertooth-ble
+    apps/supertooth-ble.c
 )
 
-target_link_libraries(supertooth-btle 
+target_link_libraries(supertooth-ble 
+    supertooth_app_support
     supertooth_service
 )
 
-target_include_directories(supertooth-btle PRIVATE
+target_include_directories(supertooth-ble PRIVATE
     ${SUPERTOOTH_SOURCE_INCLUDE_DIRS}
 )
 
@@ -230,6 +247,7 @@ add_executable(supertooth-hybrid
 )
 
 target_link_libraries(supertooth-hybrid
+    supertooth_app_support
     supertooth_service
 )
 

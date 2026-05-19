@@ -50,11 +50,14 @@ int receiver_bredr_setup_channel_ctx(receiver_session_t *session)
         bredr_processor_init(&ctx->proc, BREDR_AC_ERRORS_DEFAULT);
         if (pthread_mutex_init(&ctx->queue_mutex, NULL) != 0)
             return -1;
+        ctx->queue_mutex_initialized = 1;
         if (pthread_cond_init(&ctx->queue_cv, NULL) != 0)
         {
             pthread_mutex_destroy(&ctx->queue_mutex);
+            ctx->queue_mutex_initialized = 0;
             return -1;
         }
+        ctx->queue_cv_initialized = 1;
     }
 
     return 0;
@@ -80,8 +83,16 @@ void receiver_bredr_destroy_channel_ctx(receiver_session_t *session)
             nco_crcf_destroy(ctx->nco);
             ctx->nco = NULL;
         }
-        pthread_cond_destroy(&ctx->queue_cv);
-        pthread_mutex_destroy(&ctx->queue_mutex);
+        if (ctx->queue_cv_initialized)
+        {
+            pthread_cond_destroy(&ctx->queue_cv);
+            ctx->queue_cv_initialized = 0;
+        }
+        if (ctx->queue_mutex_initialized)
+        {
+            pthread_mutex_destroy(&ctx->queue_mutex);
+            ctx->queue_mutex_initialized = 0;
+        }
     }
 }
 
@@ -143,7 +154,7 @@ void receiver_bredr_process_channel(receiver_bredr_channel_ctx_t *ctx,
         };
         decoded.u.bredr = pkt;
 
-        pthread_mutex_lock(&session->bredr_packet_mutex);
+        pthread_mutex_lock(&session->decoded_packet_mutex);
         bredr_piconet_t *pnet =
             bredr_piconet_store_add_packet(&session->bredr_store, &decoded, clkn);
         receiver_bredr_piconet_snapshot_t snapshot;
@@ -161,10 +172,37 @@ void receiver_bredr_process_channel(receiver_bredr_channel_ctx_t *ctx,
         if (session->bredr_callbacks.on_packet)
             session->bredr_callbacks.on_packet(&decoded, snapshot_ptr,
                                                session->bredr_callbacks.user);
-        pthread_mutex_unlock(&session->bredr_packet_mutex);
+        pthread_mutex_unlock(&session->decoded_packet_mutex);
     }
 
     __atomic_add_fetch(&session->bredr_total_bits, local_bits, __ATOMIC_RELAXED);
+}
+
+void receiver_dispatch_block_to_bredr_channels(receiver_session_t *session,
+                                               unsigned int block_idx)
+{
+    for (unsigned int ch = 0; ch < session->bredr_config.channel_count; ch++)
+    {
+        receiver_bredr_channel_ctx_t *ctx = &session->bredr_ctx[ch];
+        pthread_mutex_lock(&ctx->queue_mutex);
+        if (ctx->block_count == RECEIVER_BREDR_CHANNEL_RING_SIZE)
+        {
+            unsigned int old_idx = ctx->block_idx_ring[ctx->block_read_idx];
+            ctx->block_read_idx = (ctx->block_read_idx + 1u) % RECEIVER_BREDR_CHANNEL_RING_SIZE;
+            ctx->block_count--;
+            ctx->dropped_blocks++;
+            if (session->debug)
+                fprintf(stderr, "[debug] ch=%02u queue full (%u), dropping oldest (total=%lu)\n",
+                        ctx->bredr_channel, RECEIVER_BREDR_CHANNEL_RING_SIZE, ctx->dropped_blocks);
+            __atomic_sub_fetch(&session->bredr_block_pool[old_idx].refcount, 1u, __ATOMIC_ACQ_REL);
+        }
+        ctx->block_idx_ring[ctx->block_write_idx] = block_idx;
+        ctx->block_write_idx = (ctx->block_write_idx + 1u) % RECEIVER_BREDR_CHANNEL_RING_SIZE;
+        ctx->block_count++;
+        __atomic_add_fetch(&session->bredr_block_pool[block_idx].refcount, 1u, __ATOMIC_ACQ_REL);
+        pthread_cond_signal(&ctx->queue_cv);
+        pthread_mutex_unlock(&ctx->queue_mutex);
+    }
 }
 
 int receiver_bredr_rx_cb(hackrf_transfer *transfer)
@@ -203,7 +241,6 @@ int receiver_bredr_rx_cb(hackrf_transfer *transfer)
     receiver_bredr_block_t *blk = &session->bredr_block_pool[(unsigned int)block_idx];
     blk->num_samples = num_samples;
     blk->block_base_sample = block_base;
-    blk->refcount = 0u;
 
     for (unsigned int i = 0; i < num_samples; i++)
     {
@@ -214,30 +251,7 @@ int receiver_bredr_rx_cb(hackrf_transfer *transfer)
 
     session->bredr_pool_write_idx = ((unsigned int)block_idx + 1u) % RECEIVER_BREDR_BLOCK_POOL_SIZE;
     __atomic_thread_fence(__ATOMIC_RELEASE);
-
-    for (unsigned int ch = 0; ch < session->bredr_config.channel_count; ch++)
-    {
-        receiver_bredr_channel_ctx_t *ctx = &session->bredr_ctx[ch];
-        pthread_mutex_lock(&ctx->queue_mutex);
-        if (ctx->block_count == RECEIVER_BREDR_CHANNEL_RING_SIZE)
-        {
-            unsigned int old_idx = ctx->block_idx_ring[ctx->block_read_idx];
-            ctx->block_read_idx = (ctx->block_read_idx + 1u) % RECEIVER_BREDR_CHANNEL_RING_SIZE;
-            ctx->block_count--;
-            ctx->dropped_blocks++;
-            if (session->debug)
-                fprintf(stderr, "[debug] ch=%02u queue full (%u), dropping oldest (total=%lu)\n",
-                        ctx->bredr_channel, RECEIVER_BREDR_CHANNEL_RING_SIZE, ctx->dropped_blocks);
-            __atomic_sub_fetch(&session->bredr_block_pool[old_idx].refcount, 1u, __ATOMIC_ACQ_REL);
-        }
-        ctx->block_idx_ring[ctx->block_write_idx] = (unsigned int)block_idx;
-        ctx->block_write_idx = (ctx->block_write_idx + 1u) % RECEIVER_BREDR_CHANNEL_RING_SIZE;
-        ctx->block_count++;
-        __atomic_add_fetch(&session->bredr_block_pool[(unsigned int)block_idx].refcount,
-                           1u, __ATOMIC_ACQ_REL);
-        pthread_cond_signal(&ctx->queue_cv);
-        pthread_mutex_unlock(&ctx->queue_mutex);
-    }
+    receiver_dispatch_block_to_bredr_channels(session, (unsigned int)block_idx);
 
     return session->stop_requested ? -1 : 0;
 }

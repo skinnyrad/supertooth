@@ -1,4 +1,4 @@
-#include "receiver_session_internal.h"
+#include "receiver_dsp.h"
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -61,6 +61,36 @@ void receiver_fill_bredr_piconet_snapshot(const bredr_piconet_t *pnet,
     memcpy(out->slave_rssi, pnet->slave_rssi, sizeof(out->slave_rssi));
 }
 
+void receiver_bredr_session_init(receiver_session_t *session,
+                                 const receiver_bredr_config_t *config,
+                                 const receiver_bredr_callbacks_t *callbacks)
+{
+    memset(&session->bredr_store, 0, sizeof(session->bredr_store));
+    memset(session->bredr_ctx, 0, sizeof(session->bredr_ctx));
+    memset(session->bredr_block_pool, 0, sizeof(session->bredr_block_pool));
+    session->stop_requested = 0;
+    session->debug = config->debug;
+    session->bredr_config = *config;
+    session->bredr_worker_threads = NULL;
+    session->bredr_worker_count = 0u;
+    session->bredr_samples_received = 0ULL;
+    session->bredr_shutdown_requested = 0u;
+    session->bredr_pool_write_idx = 0u;
+    session->bredr_dropped_blocks = 0ul;
+    session->bredr_total_bits = 0ULL;
+    session->bredr_total_packets = 0ul;
+    session->bredr_header_packets = 0ul;
+    session->bredr_id_packets = 0ul;
+    if (callbacks)
+        session->bredr_callbacks = *callbacks;
+    else
+        memset(&session->bredr_callbacks, 0, sizeof(session->bredr_callbacks));
+
+    receiver_bredr_update_layout(session);
+    bredr_piconet_set_rssi_averaging(config->rssi_averaging_window);
+    bredr_piconet_store_init(&session->bredr_store);
+}
+
 receiver_session_t *receiver_session_create(void)
 {
     receiver_session_t *session = (receiver_session_t *)calloc(1, sizeof(*session));
@@ -69,14 +99,14 @@ receiver_session_t *receiver_session_create(void)
 
     session->pkt_start_abs = -1;
     session->prev_status = BLE_SEARCHING;
-    pthread_mutex_init(&session->bredr_packet_mutex, NULL);
+    pthread_mutex_init(&session->decoded_packet_mutex, NULL);
     return session;
 }
 
 void receiver_session_destroy(receiver_session_t *session)
 {
     if (session)
-        pthread_mutex_destroy(&session->bredr_packet_mutex);
+        pthread_mutex_destroy(&session->decoded_packet_mutex);
     free(session);
 }
 

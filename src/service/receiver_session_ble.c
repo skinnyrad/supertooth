@@ -3,10 +3,10 @@
 #include <string.h>
 #include <unistd.h>
 
-int receiver_session_run_btle(receiver_session_t *session,
-                              const receiver_btle_config_t *config,
-                              const receiver_btle_callbacks_t *callbacks,
-                              receiver_btle_stats_t *stats_out)
+int receiver_session_run_ble(receiver_session_t *session,
+                             const receiver_ble_config_t *config,
+                             const receiver_ble_callbacks_t *callbacks,
+                             receiver_ble_stats_t *stats_out)
 {
     if (!session || !config)
         return -1;
@@ -18,14 +18,14 @@ int receiver_session_run_btle(receiver_session_t *session,
     session->pkt_start_abs = -1;
     session->prev_status = BLE_SEARCHING;
     session->debug = config->debug;
-    session->btle_config = *config;
+    session->ble_config = *config;
     if (callbacks)
-        session->btle_callbacks = *callbacks;
+        session->ble_callbacks = *callbacks;
     else
-        memset(&session->btle_callbacks, 0, sizeof(session->btle_callbacks));
+        memset(&session->ble_callbacks, 0, sizeof(session->ble_callbacks));
 
     ble_processor_init(&session->ble_proc, config->ble_channel);
-    session->demod = cpfskdem_create(1u, 0.5f, RECEIVER_BTLE_SAMPLES_PER_SYMBOL, 3u, 0.5f,
+    session->demod = cpfskdem_create(1u, 0.5f, RECEIVER_BLE_SAMPLES_PER_SYMBOL, 3u, 0.5f,
                                      LIQUID_CPFSK_GMSK);
     if (!session->demod)
         return -1;
@@ -41,14 +41,14 @@ int receiver_session_run_btle(receiver_session_t *session,
 
     hackrf_config_t radio_config = {
         .lo_freq_hz = config->lo_freq_hz,
-        .sample_rate = RECEIVER_BTLE_SAMPLE_RATE,
-        .lna_gain = RECEIVER_BTLE_LNA_GAIN,
-        .vga_gain = RECEIVER_BTLE_VGA_GAIN,
+        .sample_rate = RECEIVER_BLE_SAMPLE_RATE,
+        .lna_gain = RECEIVER_BLE_LNA_GAIN,
+        .vga_gain = RECEIVER_BLE_VGA_GAIN,
     };
 
     result = hackrf_configure(device, &radio_config);
     if (result == HACKRF_SUCCESS)
-        result = hackrf_start_rx(device, receiver_btle_rx_cb, session);
+        result = hackrf_start_rx(device, receiver_ble_rx_cb, session);
 
     if (result == HACKRF_SUCCESS)
     {

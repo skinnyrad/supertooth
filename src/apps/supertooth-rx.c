@@ -1,29 +1,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <stddef.h>
 #include <unistd.h>
-#include <signal.h>
 #include <string.h>
-#include <math.h>
 #include <inttypes.h>
 #include <getopt.h>
+#include "app_common.h"
 #include "receiver_session.h"
-#include <stddef.h>
-#define BREDR_CHANNEL_0_FREQ 2402000000.0
 #define BREDR_MAX_CHANNEL 79u
-#define MAX_BREDR_CHANNELS 20u
-#define DEFAULT_BREDR_CHANNELS MAX_BREDR_CHANNELS
 
 /* -------------------------------------------------------------------------
  * Output modes
  * -------------------------------------------------------------------------*/
-
-typedef enum
-{
-    OUTPUT_MODE_FULL = 0,
-    OUTPUT_MODE_SUMMARY = 1,
-    OUTPUT_MODE_RSSI = 2
-} output_mode_t;
 
 typedef struct
 {
@@ -40,20 +29,12 @@ typedef void (*packet_formatter_fn)(unsigned long packet_no,
                                     const decoded_packet_t *packet,
                                     const receiver_bredr_piconet_snapshot_t *pnet);
 
-typedef struct
-{
-    output_mode_t mode;
-    const char *name;
-    packet_formatter_fn fn;
-} output_mode_spec_t;
-
-static volatile sig_atomic_t g_stop = 0;
-static output_mode_t g_output_mode = OUTPUT_MODE_FULL;
+static app_output_mode_t g_output_mode = APP_OUTPUT_MODE_FULL;
 static int g_debug = 0;
 static int g_lap_filter_enabled = 0;
 static uint32_t g_lap_filter = 0u;
-static unsigned int g_rssi_averaging_window = 16u;
-static unsigned int g_num_bredr_channels = DEFAULT_BREDR_CHANNELS;
+static unsigned int g_rssi_averaging_window = RECEIVER_BREDR_DEFAULT_RSSI_AVERAGING_WINDOW;
+static unsigned int g_num_bredr_channels = RECEIVER_BREDR_MAX_CHANNELS;
 static unsigned int g_bottom_bredr_channel = 0u;
 static int g_bottom_channel_explicit = 0;
 
@@ -71,14 +52,6 @@ static const char *const s_bredr_type_names[16] = {
 /* -------------------------------------------------------------------------
  * Helpers
  * -------------------------------------------------------------------------*/
-
-static void handle_sigint(int sig)
-{
-    (void)sig;
-    g_stop = 1;
-    if (g_session)
-        receiver_session_request_stop(g_session);
-}
 
 static const char *tracking_state_desc(int tracking_state)
 {
@@ -226,9 +199,6 @@ static void print_packet_full(unsigned long packet_no,
 {
     const bredr_packet_t *pkt = &packet->u.bredr;
     const rx_metadata_t *meta = &packet->meta;
-    if (!pkt)
-        return;
-
     printf("\n------------------ Packet #%lu --------------------\n", packet_no);
     printf("[RX Info]\n");
     printf("Sample Index : %" PRIu64 " (%u Msps master clock)\n",
@@ -295,9 +265,6 @@ static void print_packet_summary(unsigned long packet_no,
 {
     const bredr_packet_t *pkt = &packet->u.bredr;
     const rx_metadata_t *meta = &packet->meta;
-    if (!pkt)
-        return;
-
     if (pkt->has_header)
     {
         char uap_buf[8];
@@ -340,9 +307,6 @@ static void print_packet_rssi(unsigned long packet_no,
     (void)pnet;
     const bredr_packet_t *pkt = &packet->u.bredr;
     const rx_metadata_t *meta = &packet->meta;
-    if (!pkt)
-        return;
-
     size_t count = receiver_session_bredr_piconet_count(g_session);
     const receiver_bredr_piconet_snapshot_t **ordered =
         (const receiver_bredr_piconet_snapshot_t **)malloc(sizeof(*ordered) * (count > 0u ? count : 1u));
@@ -414,40 +378,24 @@ static void print_packet_rssi(unsigned long packet_no,
     free(ordered);
 }
 
-static const output_mode_spec_t s_output_modes[] = {
-    {OUTPUT_MODE_FULL,      "full",      print_packet_full},
-    {OUTPUT_MODE_SUMMARY,   "summary",   print_packet_summary},
-    {OUTPUT_MODE_RSSI,      "rssi",      print_packet_rssi},
+static const app_output_mode_option_t s_output_modes[] = {
+    {APP_OUTPUT_MODE_FULL, "full"},
+    {APP_OUTPUT_MODE_SUMMARY, "summary"},
+    {APP_OUTPUT_MODE_RSSI, "rssi"},
 };
 
-static const output_mode_spec_t *output_mode_spec(output_mode_t mode)
+static packet_formatter_fn output_mode_formatter(app_output_mode_t mode)
 {
-    for (size_t i = 0; i < sizeof(s_output_modes) / sizeof(s_output_modes[0]); i++)
+    switch (mode)
     {
-        if (s_output_modes[i].mode == mode)
-            return &s_output_modes[i];
+    case APP_OUTPUT_MODE_SUMMARY:
+        return print_packet_summary;
+    case APP_OUTPUT_MODE_RSSI:
+        return print_packet_rssi;
+    case APP_OUTPUT_MODE_FULL:
+    default:
+        return print_packet_full;
     }
-    return &s_output_modes[0];
-}
-
-static int parse_output_mode(const char *arg, output_mode_t *out_mode)
-{
-    if (!arg || !out_mode)
-        return -1;
-    for (size_t i = 0; i < sizeof(s_output_modes) / sizeof(s_output_modes[0]); i++)
-    {
-        if (strcmp(arg, s_output_modes[i].name) == 0)
-        {
-            *out_mode = s_output_modes[i].mode;
-            return 0;
-        }
-    }
-    if (strcmp(arg, "ubertooth") == 0)
-    {
-        *out_mode = OUTPUT_MODE_SUMMARY;
-        return 0;
-    }
-    return -1;
 }
 
 static int parse_lap_filter(const char *arg, uint32_t *out_lap)
@@ -491,7 +439,7 @@ static int parse_channel_count(const char *arg, unsigned int *out_channels)
     char *end = NULL;
     unsigned long value = strtoul(arg, &end, 0);
     if (end == arg || *end != '\0' ||
-        value < 2ul || value > (unsigned long)MAX_BREDR_CHANNELS ||
+        value < 2ul || value > (unsigned long)RECEIVER_BREDR_MAX_CHANNELS ||
         (value & 1ul) != 0ul)
         return -1;
 
@@ -524,7 +472,7 @@ static void print_usage(const char *argv0)
             "--rssi-averaging N|none");
     fprintf(stderr, "  %-30s Number of BR/EDR channels from bottom (even 2-%u, default: %u)\n",
             "-c, --channels N",
-            MAX_BREDR_CHANNELS, DEFAULT_BREDR_CHANNELS);
+            RECEIVER_BREDR_MAX_CHANNELS, RECEIVER_BREDR_MAX_CHANNELS);
     fprintf(stderr, "  %-30s Lowest BR/EDR channel to process (0-%u, default: 0)\n",
             "-b, --bottom-channel CH",
             BREDR_MAX_CHANNEL);
@@ -536,9 +484,8 @@ static void handle_bredr_packet(const decoded_packet_t *packet,
                                 void *user)
 {
     (void)user;
-    const output_mode_spec_t *spec = output_mode_spec(g_output_mode);
     g_total_packets++;
-    spec->fn(g_total_packets, packet, pnet);
+    output_mode_formatter(g_output_mode)(g_total_packets, packet, pnet);
     fflush(stdout);
 }
 
@@ -565,7 +512,9 @@ int main(int argc, char *argv[])
         switch (opt)
         {
             case 'v':
-                if (parse_output_mode(optarg, &g_output_mode) != 0)
+                if (app_parse_output_mode(optarg, s_output_modes,
+                                          sizeof(s_output_modes) / sizeof(s_output_modes[0]),
+                                          &g_output_mode) != 0)
                 {
                     fprintf(stderr, "Invalid view mode: %s\n", optarg);
                     print_usage(argv[0]);
@@ -593,7 +542,7 @@ int main(int argc, char *argv[])
                 if (parse_channel_count(optarg, &g_num_bredr_channels) != 0)
                 {
                     fprintf(stderr, "Invalid --channels value: %s (expected even 2-%u)\n",
-                            optarg, MAX_BREDR_CHANNELS);
+                            optarg, RECEIVER_BREDR_MAX_CHANNELS);
                     print_usage(argv[0]);
                     return EXIT_FAILURE;
                 }
@@ -639,10 +588,12 @@ int main(int argc, char *argv[])
         }
     }
 
-    const output_mode_spec_t *mode_spec = output_mode_spec(g_output_mode);
+    const char *mode_name =
+        app_output_mode_name(g_output_mode, s_output_modes,
+                             sizeof(s_output_modes) / sizeof(s_output_modes[0]));
     unsigned int sample_rate = (g_num_bredr_channels == 2u) ? 4000000u : g_num_bredr_channels * 1000000u;
     unsigned int decim_factor = sample_rate / 2000000u;
-    double lo_mhz = ((BREDR_CHANNEL_0_FREQ + g_bottom_bredr_channel * 1000000.0) -
+    double lo_mhz = ((RECEIVER_BREDR_CHANNEL_0_FREQ + g_bottom_bredr_channel * 1000000.0) -
                     (-(g_num_bredr_channels / 2.0 - 0.5) * 1000000.0)) / 1e6;
     printf("Supertooth RX (BR/EDR)\n");
     printf("======================\n");
@@ -652,7 +603,7 @@ int main(int argc, char *argv[])
            decim_factor, 2u);
     printf("Channels    : %u (%u..%u)\n", g_num_bredr_channels,
            g_bottom_bredr_channel, g_bottom_bredr_channel + g_num_bredr_channels - 1u);
-    printf("View mode   : %s\n", mode_spec->name);
+    printf("View mode   : %s\n", mode_name);
     if (g_lap_filter_enabled)
         printf("LAP filter  : %06" PRIX32 "\n", g_lap_filter);
     else
@@ -661,10 +612,11 @@ int main(int argc, char *argv[])
         printf("RSSI EMA    : disabled\n");
     else
         printf("RSSI EMA    : window=%u\n", g_rssi_averaging_window);
-    printf("Block pool  : %u blocks, per-channel queue: %u\n", 64u, 8u);
+    printf("Block pool  : %u blocks, per-channel queue: %u\n",
+           RECEIVER_BREDR_BLOCK_POOL_SIZE, RECEIVER_BREDR_CHANNEL_RING_SIZE);
     printf("Debug       : %s\n", g_debug ? "enabled" : "disabled");
     printf("Press Ctrl+C to stop.\n\n");
-    signal(SIGINT, handle_sigint);
+    app_install_sigint_handler(&g_session);
     receiver_bredr_config_t config = {
         .channel_count = g_num_bredr_channels,
         .bottom_channel = g_bottom_bredr_channel,
@@ -684,7 +636,7 @@ int main(int argc, char *argv[])
     int result = receiver_session_run_bredr(g_session, &config, &callbacks, &stats);
 
     printf("\n\n=== Session Summary ===\n");
-    printf("  Output mode    : %s\n", mode_spec->name);
+    printf("  Output mode    : %s\n", mode_name);
     if (g_lap_filter_enabled)
         printf("  LAP filter     : %06" PRIX32 "\n", g_lap_filter);
     else

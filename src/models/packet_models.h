@@ -26,14 +26,6 @@ typedef struct
 {
     protocol_t protocol;
     rx_metadata_t meta;
-    const uint8_t *raw_bits;
-    uint32_t raw_bit_count;
-} framed_packet_t;
-
-typedef struct
-{
-    protocol_t protocol;
-    rx_metadata_t meta;
     union
     {
         ble_packet_t ble;

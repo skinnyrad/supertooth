@@ -33,17 +33,18 @@ static void *receiver_bredr_worker(void *arg)
 static int receiver_bredr_init_thread_pool(receiver_session_t *session)
 {
     session->bredr_shutdown_requested = 0u;
-    session->bredr_worker_count = session->bredr_config.channel_count;
+    session->bredr_worker_count = 0u;
     session->bredr_worker_threads =
-        (pthread_t *)calloc(session->bredr_worker_count, sizeof(pthread_t));
+        (pthread_t *)calloc(session->bredr_config.channel_count, sizeof(pthread_t));
     if (!session->bredr_worker_threads)
         return -1;
 
-    for (unsigned int i = 0; i < session->bredr_worker_count; i++)
+    for (unsigned int i = 0; i < session->bredr_config.channel_count; i++)
     {
         if (pthread_create(&session->bredr_worker_threads[i], NULL, receiver_bredr_worker,
                            &session->bredr_ctx[i]) != 0)
             return -1;
+        session->bredr_worker_count++;
     }
     return 0;
 }
@@ -73,30 +74,7 @@ int receiver_session_run_bredr(receiver_session_t *session,
     if (!session || !config)
         return -1;
 
-    memset(&session->bredr_store, 0, sizeof(session->bredr_store));
-    memset(session->bredr_ctx, 0, sizeof(session->bredr_ctx));
-    memset(session->bredr_block_pool, 0, sizeof(session->bredr_block_pool));
-    session->stop_requested = 0;
-    session->debug = config->debug;
-    session->bredr_config = *config;
-    session->bredr_worker_threads = NULL;
-    session->bredr_worker_count = 0u;
-    session->bredr_samples_received = 0ULL;
-    session->bredr_shutdown_requested = 0u;
-    session->bredr_pool_write_idx = 0u;
-    session->bredr_dropped_blocks = 0ul;
-    session->bredr_total_bits = 0ULL;
-    session->bredr_total_packets = 0ul;
-    session->bredr_header_packets = 0ul;
-    session->bredr_id_packets = 0ul;
-    if (callbacks)
-        session->bredr_callbacks = *callbacks;
-    else
-        memset(&session->bredr_callbacks, 0, sizeof(session->bredr_callbacks));
-
-    receiver_bredr_update_layout(session);
-    bredr_piconet_set_rssi_averaging(config->rssi_averaging_window);
-    bredr_piconet_store_init(&session->bredr_store);
+    receiver_bredr_session_init(session, config, callbacks);
 
     if (receiver_bredr_setup_channel_ctx(session) != 0)
     {
@@ -120,8 +98,8 @@ int receiver_session_run_bredr(receiver_session_t *session,
         hackrf_config_t radio_config = {
             .lo_freq_hz = session->bredr_lo_freq_hz,
             .sample_rate = session->bredr_sample_rate,
-            .lna_gain = 32u,
-            .vga_gain = 32u,
+            .lna_gain = RECEIVER_BREDR_LNA_GAIN,
+            .vga_gain = RECEIVER_BREDR_VGA_GAIN,
         };
         result = hackrf_configure(device, &radio_config);
         if (result == HACKRF_SUCCESS)
@@ -137,6 +115,7 @@ int receiver_session_run_bredr(receiver_session_t *session,
 
     receiver_bredr_stop_thread_pool(session);
     receiver_bredr_destroy_channel_ctx(session);
+    bredr_piconet_store_free(&session->bredr_store);
 
     if (stats_out)
     {

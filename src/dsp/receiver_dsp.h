@@ -3,13 +3,15 @@
 
 #include "receiver_session_internal.h"
 
-int receiver_btle_rx_cb(hackrf_transfer *transfer);
+int receiver_ble_rx_cb(hackrf_transfer *transfer);
 
 void receiver_bredr_update_layout(receiver_session_t *session);
 int receiver_bredr_setup_channel_ctx(receiver_session_t *session);
 void receiver_bredr_destroy_channel_ctx(receiver_session_t *session);
 void receiver_bredr_process_channel(receiver_bredr_channel_ctx_t *ctx,
                                     const receiver_bredr_block_t *blk);
+void receiver_dispatch_block_to_bredr_channels(receiver_session_t *session,
+                                               unsigned int block_idx);
 int receiver_bredr_rx_cb(hackrf_transfer *transfer);
 
 int receiver_hybrid_setup_ble(receiver_session_t *session);

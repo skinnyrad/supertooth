@@ -49,17 +49,13 @@ float receiver_rssi_from_mean_power_range(const float complex *samples,
         return invalid_value;
 
     float sum_power = 0.0f;
-    unsigned int sample_count = 0u;
     for (unsigned int i = start_index; i < end_index; i++)
     {
         float re = crealf(samples[i]);
         float im = cimagf(samples[i]);
         sum_power += re * re + im * im;
-        sample_count++;
     }
-
-    if (sample_count == 0u)
-        return invalid_value;
+    unsigned int sample_count = end_index - start_index;
 
     return receiver_rssi_from_linear_power(sum_power / (float)sample_count, invalid_value);
 }

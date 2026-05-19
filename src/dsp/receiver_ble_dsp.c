@@ -3,7 +3,7 @@
 
 #include <stdio.h>
 
-int receiver_btle_rx_cb(hackrf_transfer *transfer)
+int receiver_ble_rx_cb(hackrf_transfer *transfer)
 {
     receiver_session_t *session = (receiver_session_t *)transfer->rx_ctx;
     if (!session)
@@ -15,15 +15,15 @@ int receiver_btle_rx_cb(hackrf_transfer *transfer)
     unsigned int num_iq_bytes = (unsigned int)transfer->valid_length;
     unsigned int num_complex = num_iq_bytes / 2u;
 
-    if (num_complex > (RECEIVER_BTLE_BUFFER_SIZE / 2u))
+    if (num_complex > (RECEIVER_BLE_BUFFER_SIZE / 2u))
     {
         session->truncated_callback_blocks++;
         if (session->debug)
             fprintf(stderr,
                     "[debug] callback buffer truncated to %u complex samples (total=%lu)\n",
-                    RECEIVER_BTLE_BUFFER_SIZE / 2u,
+                    RECEIVER_BLE_BUFFER_SIZE / 2u,
                     session->truncated_callback_blocks);
-        num_complex = RECEIVER_BTLE_BUFFER_SIZE / 2u;
+        num_complex = RECEIVER_BLE_BUFFER_SIZE / 2u;
     }
 
     unsigned long long buf_start = session->total_samples;
@@ -36,10 +36,10 @@ int receiver_btle_rx_cb(hackrf_transfer *transfer)
         session->raw[i] = i_sample + q_sample * _Complex_I;
     }
 
-    unsigned int num_bits = num_complex / RECEIVER_BTLE_SAMPLES_PER_SYMBOL;
+    unsigned int num_bits = num_complex / RECEIVER_BLE_SAMPLES_PER_SYMBOL;
     for (unsigned int s = 0; s < num_bits; s++)
     {
-        unsigned int sample_index = s * RECEIVER_BTLE_SAMPLES_PER_SYMBOL;
+        unsigned int sample_index = s * RECEIVER_BLE_SAMPLES_PER_SYMBOL;
         unsigned int sym = cpfskdem_demodulate(session->demod, &session->raw[sample_index]);
         uint8_t bit = (uint8_t)(sym & 0x01u);
         ble_status_t status = ble_push_bit(&session->ble_proc, bit);
@@ -57,7 +57,7 @@ int receiver_btle_rx_cb(hackrf_transfer *transfer)
         {
             long long rel_start = session->pkt_start_abs - (long long)buf_start;
             i_start = (rel_start < 0) ? 0u : (unsigned int)rel_start;
-            i_end = (s + 1u) * RECEIVER_BTLE_SAMPLES_PER_SYMBOL;
+            i_end = (s + 1u) * RECEIVER_BLE_SAMPLES_PER_SYMBOL;
             if (i_end > num_complex)
                 i_end = num_complex;
         }
@@ -68,14 +68,14 @@ int receiver_btle_rx_cb(hackrf_transfer *transfer)
 
         session->packet_count++;
 
-        if (session->btle_callbacks.on_packet)
+        if (session->ble_callbacks.on_packet)
         {
             float rssi_dbr = receiver_rssi_from_mean_power_range(session->raw, i_start, i_end, 0.0f);
             unsigned long long abs_sample_index = buf_start + sample_index;
             rx_metadata_t meta =
                 receiver_make_metadata(abs_sample_index,
-                                       (uint32_t)session->btle_config.lo_freq_hz,
-                                       (uint16_t)session->btle_config.ble_channel,
+                                       (uint32_t)session->ble_config.lo_freq_hz,
+                                       (uint16_t)session->ble_config.ble_channel,
                                        rssi_dbr,
                                        255u);
             decoded_packet_t decoded = {
@@ -83,7 +83,7 @@ int receiver_btle_rx_cb(hackrf_transfer *transfer)
                 .meta = meta,
             };
             decoded.u.ble = pkt;
-            session->btle_callbacks.on_packet(&decoded, session->btle_callbacks.user);
+            session->ble_callbacks.on_packet(&decoded, session->ble_callbacks.user);
         }
     }
 

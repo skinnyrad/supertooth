@@ -68,100 +68,40 @@ static void receiver_hybrid_bredr_bridge(const decoded_packet_t *packet,
 
     const bredr_packet_t *pkt = &packet->u.bredr;
     uint32_t clkn = receiver_bredr_sample_to_clkn(session, packet->meta.start_sample);
-    session->hybrid_callbacks.on_bredr_packet(packet->meta.channel_index,
-                                              pkt->lap,
+    session->hybrid_callbacks.on_bredr_packet(pkt->lap,
                                               clkn,
                                               pkt->ac_errors,
                                               &packet->meta,
                                               session->hybrid_callbacks.user);
 }
 
-
-int receiver_session_run_hybrid(receiver_session_t *session,
-                                const receiver_hybrid_config_t *config,
-                                const receiver_hybrid_callbacks_t *callbacks,
-                                receiver_hybrid_stats_t *stats_out)
+static int receiver_hybrid_start_thread_pool(receiver_session_t *session)
 {
-    if (!session || !config)
-        return -1;
-    memset(&session->bredr_store, 0, sizeof(session->bredr_store));
-    memset(session->bredr_ctx, 0, sizeof(session->bredr_ctx));
-    memset(session->bredr_block_pool, 0, sizeof(session->bredr_block_pool));
-    session->stop_requested = 0;
-    session->debug = config->debug;
-    session->hybrid_config = *config;
-    session->hybrid_total_packets = 0;
-    session->hybrid_dropped_blocks = 0;
-    session->hybrid_shutdown_requested = 0;
-    session->bredr_samples_received = 0ULL;
-    session->bredr_pool_write_idx = 0u;
-    session->bredr_dropped_blocks = 0ul;
-    session->bredr_total_bits = 0ULL;
-    session->bredr_total_packets = 0ul;
-    session->bredr_header_packets = 0ul;
-    session->bredr_id_packets = 0ul;
-    session->bredr_config.channel_count = RECEIVER_BREDR_MAX_CHANNELS;
-    session->bredr_config.bottom_channel = 0u;
-    session->bredr_config.rssi_averaging_window = 16u;
-    session->bredr_config.lap_filter = 0u;
-    session->bredr_config.lap_filter_enabled = 0;
-    session->bredr_config.debug = config->debug;
-    if (callbacks) session->hybrid_callbacks = *callbacks;
-    else memset(&session->hybrid_callbacks, 0, sizeof(session->hybrid_callbacks));
-    session->bredr_callbacks.on_packet = receiver_hybrid_bredr_bridge;
-    session->bredr_callbacks.user = session;
-    receiver_bredr_update_layout(session);
-    bredr_piconet_set_rssi_averaging(session->bredr_config.rssi_averaging_window);
-    bredr_piconet_store_init(&session->bredr_store);
-    if (receiver_bredr_setup_channel_ctx(session) != 0)
-    {
-        bredr_piconet_store_free(&session->bredr_store);
-        receiver_bredr_destroy_channel_ctx(session);
-        return -1;
-    }
-    if (receiver_hybrid_setup_ble(session) != 0)
-    {
-        receiver_hybrid_destroy_ble(session);
-        receiver_bredr_destroy_channel_ctx(session);
-        bredr_piconet_store_free(&session->bredr_store);
-        return -1;
-    }
-
-    session->hybrid_worker_count = RECEIVER_BREDR_MAX_CHANNELS + 1u;
-    session->hybrid_worker_threads = (pthread_t *)calloc(session->hybrid_worker_count, sizeof(pthread_t));
+    session->hybrid_shutdown_requested = 0u;
+    session->hybrid_worker_count = 0u;
+    session->hybrid_worker_threads =
+        (pthread_t *)calloc(RECEIVER_BREDR_MAX_CHANNELS + 1u, sizeof(pthread_t));
     if (!session->hybrid_worker_threads)
-    {
-        receiver_hybrid_destroy_ble(session);
-        receiver_bredr_destroy_channel_ctx(session);
-        bredr_piconet_store_free(&session->bredr_store);
         return -1;
-    }
+
     for (unsigned int i = 0; i < RECEIVER_BREDR_MAX_CHANNELS; i++)
-        pthread_create(&session->hybrid_worker_threads[i], NULL, receiver_hybrid_bredr_worker, &session->bredr_ctx[i]);
-    pthread_create(&session->hybrid_worker_threads[RECEIVER_BREDR_MAX_CHANNELS], NULL, receiver_hybrid_ble_worker, &session->hybrid_ble_ctx);
-
-    hackrf_device *device = NULL;
-    int result = hackrf_connect(&device);
-    if (result == HACKRF_SUCCESS)
     {
-        hackrf_config_t radio_config = {
-            .lo_freq_hz = 2411500000ULL,
-            .sample_rate = 20000000u,
-            .lna_gain = 32u,
-            .vga_gain = 32u,
-        };
-        result = hackrf_configure(device, &radio_config);
-        if (result == HACKRF_SUCCESS)
-            result = hackrf_start_rx(device, receiver_hybrid_cb, session);
-        if (result == HACKRF_SUCCESS)
-        {
-            while (!session->stop_requested)
-                sleep(1);
-            hackrf_stop_rx(device);
-        }
-        hackrf_disconnect(device);
+        if (pthread_create(&session->hybrid_worker_threads[i], NULL,
+                           receiver_hybrid_bredr_worker, &session->bredr_ctx[i]) != 0)
+            return -1;
+        session->hybrid_worker_count++;
     }
 
+    if (pthread_create(&session->hybrid_worker_threads[RECEIVER_BREDR_MAX_CHANNELS], NULL,
+                       receiver_hybrid_ble_worker, &session->hybrid_ble_ctx) != 0)
+        return -1;
+
+    session->hybrid_worker_count++;
+    return 0;
+}
+
+static void receiver_hybrid_stop_thread_pool(receiver_session_t *session)
+{
     session->hybrid_shutdown_requested = 1u;
     for (unsigned int i = 0; i < RECEIVER_BREDR_MAX_CHANNELS; i++)
     {
@@ -176,6 +116,88 @@ int receiver_session_run_hybrid(receiver_session_t *session,
         pthread_join(session->hybrid_worker_threads[i], NULL);
     free(session->hybrid_worker_threads);
     session->hybrid_worker_threads = NULL;
+    session->hybrid_worker_count = 0u;
+}
+
+
+int receiver_session_run_hybrid(receiver_session_t *session,
+                                const receiver_hybrid_config_t *config,
+                                const receiver_hybrid_callbacks_t *callbacks,
+                                receiver_hybrid_stats_t *stats_out)
+{
+    receiver_bredr_config_t bredr_config = {
+        .channel_count = RECEIVER_BREDR_MAX_CHANNELS,
+        .bottom_channel = 0u,
+        .rssi_averaging_window = RECEIVER_BREDR_DEFAULT_RSSI_AVERAGING_WINDOW,
+        .lap_filter = 0u,
+        .lap_filter_enabled = 0,
+        .debug = config ? config->debug : 0,
+    };
+    receiver_bredr_callbacks_t bredr_callbacks = {
+        .on_packet = receiver_hybrid_bredr_bridge,
+        .user = session,
+    };
+
+    if (!session || !config)
+        return -1;
+    session->hybrid_config = *config;
+    session->hybrid_total_packets = 0;
+    session->hybrid_dropped_blocks = 0;
+    session->hybrid_shutdown_requested = 0;
+    session->hybrid_worker_threads = NULL;
+    session->hybrid_worker_count = 0u;
+    if (callbacks)
+        session->hybrid_callbacks = *callbacks;
+    else
+        memset(&session->hybrid_callbacks, 0, sizeof(session->hybrid_callbacks));
+    receiver_bredr_session_init(session, &bredr_config, &bredr_callbacks);
+    if (receiver_bredr_setup_channel_ctx(session) != 0)
+    {
+        bredr_piconet_store_free(&session->bredr_store);
+        receiver_bredr_destroy_channel_ctx(session);
+        return -1;
+    }
+    if (receiver_hybrid_setup_ble(session) != 0)
+    {
+        receiver_hybrid_destroy_ble(session);
+        receiver_bredr_destroy_channel_ctx(session);
+        bredr_piconet_store_free(&session->bredr_store);
+        return -1;
+    }
+
+    if (receiver_hybrid_start_thread_pool(session) != 0)
+    {
+        if (session->hybrid_worker_threads)
+            receiver_hybrid_stop_thread_pool(session);
+        receiver_hybrid_destroy_ble(session);
+        receiver_bredr_destroy_channel_ctx(session);
+        bredr_piconet_store_free(&session->bredr_store);
+        return -1;
+    }
+
+    hackrf_device *device = NULL;
+    int result = hackrf_connect(&device);
+    if (result == HACKRF_SUCCESS)
+    {
+        hackrf_config_t radio_config = {
+            .lo_freq_hz = RECEIVER_HYBRID_LO_FREQ_HZ,
+            .sample_rate = RECEIVER_HYBRID_SAMPLE_RATE,
+            .lna_gain = RECEIVER_BREDR_LNA_GAIN,
+            .vga_gain = RECEIVER_BREDR_VGA_GAIN,
+        };
+        result = hackrf_configure(device, &radio_config);
+        if (result == HACKRF_SUCCESS)
+            result = hackrf_start_rx(device, receiver_hybrid_cb, session);
+        if (result == HACKRF_SUCCESS)
+        {
+            while (!session->stop_requested)
+                sleep(1);
+            hackrf_stop_rx(device);
+        }
+        hackrf_disconnect(device);
+    }
+
+    receiver_hybrid_stop_thread_pool(session);
 
     if (stats_out)
     {

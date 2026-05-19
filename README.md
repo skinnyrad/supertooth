@@ -13,7 +13,7 @@ Supertooth is a C-based software-defined radio (SDR) project for receiving and d
 It includes three runtime binaries:
 
 1. `supertooth-rx`: BR/EDR multichannel receiver with piconet tracking.
-2. `supertooth-btle`: BLE advertising capture/decoder on channel 37 (2.402 GHz).
+2. `supertooth-ble`: BLE advertising capture/decoder on channel 37 (2.402 GHz).
 3. `supertooth-hybrid`: simultaneous BR/EDR multichannel + BLE channel 37 processing from a shared stream.
 
 ## Prerequisites
@@ -71,7 +71,7 @@ Output binaries are in:
 Main binaries (require HackRF hardware):
 
 ```bash
-./build/src/supertooth-btle --view full
+./build/src/supertooth-ble --view full
 ./build/src/supertooth-rx --view full
 ./build/src/supertooth-hybrid --view full
 ```
@@ -82,14 +82,14 @@ Main binaries (require HackRF hardware):
 ./build/src/supertooth-rx --help
 ```
 
-`supertooth-btle` and `supertooth-hybrid` also support:
+`supertooth-ble` and `supertooth-hybrid` also support:
 
 ```bash
 --view full|summary
 --debug
 ```
 
-`supertooth-btle` additionally supports:
+`supertooth-ble` additionally supports:
 
 ```bash
 --ble-channel 37|38|39
@@ -115,7 +115,7 @@ src/
 
 ### Main layers
 
-- `src/apps/`: `supertooth-rx`, `supertooth-btle`, and `supertooth-hybrid` user-facing binaries.
+- `src/apps/`: `supertooth-rx`, `supertooth-ble`, and `supertooth-hybrid` user-facing binaries.
 - `src/service/`: reusable library boundary built around `receiver_session`.
 - `src/dsp/`: mode-specific DSP implementations extracted from session orchestration.
 - `src/radio/`: HackRF lifecycle and configuration wrapper.
