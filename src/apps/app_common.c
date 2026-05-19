@@ -1,9 +1,11 @@
 #include "app_common.h"
 
+#include <pthread.h>
 #include <signal.h>
 #include <string.h>
 
 static receiver_session_t **g_session_slot = NULL;
+static pthread_mutex_t g_output_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static void app_handle_sigint(int sig)
 {
@@ -27,12 +29,6 @@ int app_parse_output_mode(const char *arg,
             *out_mode = options[i].mode;
             return 0;
         }
-    }
-
-    if (strcmp(arg, "ubertooth") == 0)
-    {
-        *out_mode = APP_OUTPUT_MODE_SUMMARY;
-        return 0;
     }
 
     return -1;
@@ -61,6 +57,16 @@ const char *app_output_mode_name(app_output_mode_t mode,
     const app_output_mode_option_t *option =
         app_output_mode_option(mode, options, option_count);
     return option ? option->name : "";
+}
+
+void app_output_lock(void)
+{
+    pthread_mutex_lock(&g_output_mutex);
+}
+
+void app_output_unlock(void)
+{
+    pthread_mutex_unlock(&g_output_mutex);
 }
 
 void app_install_sigint_handler(receiver_session_t **session_slot)

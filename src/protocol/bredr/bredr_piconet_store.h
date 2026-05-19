@@ -121,13 +121,6 @@ bredr_piconet_t *bredr_piconet_store_add_packet(bredr_piconet_store_t *store,
                                                   uint32_t clkn);
 
 /**
- * @brief Print a summary of every piconet in the store to stdout.
- *
- * @param store  Must not be NULL.
- */
-void bredr_piconet_store_print(const bredr_piconet_store_t *store);
-
-/**
  * @brief Return the number of piconets currently tracked by the store.
  *
  * @param store  Must not be NULL.

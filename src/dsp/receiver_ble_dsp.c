@@ -1,6 +1,7 @@
 #include "receiver_dsp.h"
 #include "rssi_measurements.h"
 
+#include <math.h>
 #include <stdio.h>
 
 int receiver_ble_rx_cb(hackrf_transfer *transfer)
@@ -70,7 +71,9 @@ int receiver_ble_rx_cb(hackrf_transfer *transfer)
 
         if (session->ble_callbacks.on_packet)
         {
-            float rssi_dbr = receiver_rssi_from_mean_power_range(session->raw, i_start, i_end, 0.0f);
+            float rssi_dbr =
+                receiver_rssi_from_mean_power_range(session->raw, i_start, i_end,
+                                                    RECEIVER_RSSI_INVALID);
             unsigned long long abs_sample_index = buf_start + sample_index;
             rx_metadata_t meta =
                 receiver_make_metadata(abs_sample_index,

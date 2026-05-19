@@ -21,7 +21,7 @@
  *   if (s == BREDR_VALID_PACKET) {
  *       bredr_packet_t pkt;
  *       bredr_get_packet(&proc, &pkt);
- *       bredr_print_packet(&pkt);
+ *       // Use pkt ...
  *   }
  * @endcode
  *
@@ -187,13 +187,6 @@ typedef struct
      *   2 — HEC failed  (inquiry packet; HEC does not match)
      */
     uint8_t  hec_valid;
-
-    /**
-     * Received signal strength in dBr (relative dB) at capture time.
-     * Set by the caller before or after bredr_get_packet().  Defaults to 0.0f
-     * if the caller does not set it.
-     */
-    float    rssi;
 
     /**
      * Raw 54 FEC-encoded header bits as received from the air.
@@ -395,16 +388,6 @@ bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit);
 int            bredr_get_packet(bredr_processor_t *proc, bredr_packet_t *out);
 
 /**
- * @brief Print a human-readable summary of a captured BR/EDR packet.
- *
- * Displays the LAP, AC error count, decoded header fields (including the
- * packet type name), and a hex dump of the first payload bytes.  The payload
- * is printed in raw air order and has not been dewhitened.
- *
- * @param pkt  Pointer to the packet.  Must not be NULL.
- */
-
-/**
  * @brief Compute the 8-bit HEC for a 10-bit header value and a known UAP.
  *
  * Exposed publicly so that external modules (e.g. bredr_piconet) can
@@ -436,33 +419,6 @@ uint8_t        bredr_compute_hec(uint16_t data, uint8_t uap);
  */
 void           bredr_decode_header_bits(const bredr_packet_t *pkt,
                                         uint8_t clk6, uint8_t bits[18]);
-
-/**
- * @brief Print a packet without decoded header fields.
- *
- * When CLK1-6 is unknown the majority-voted header bits are still whitened
- * and therefore meaningless.  This function prints the LAP, AC error count,
- * the raw 54-bit FEC-encoded header word, and a note that the header fields
- * cannot be decoded until the clock is known.  Payload bytes are shown raw.
- *
- * @param pkt  Pointer to the packet.  Must not be NULL.
- */
-void           bredr_print_packet(const bredr_packet_t *pkt);
-
-/**
- * @brief Print a packet with fully decoded header fields.
- *
- * Unwhitens the header with the given CLK1-6, decodes all fields, verifies
- * the HEC against the known UAP, and prints a human-readable summary.
- * Payload is still shown raw (dewhitening the payload requires additional
- * clock bits beyond CLK1-6).
- *
- * @param pkt   Pointer to the packet.  Must not be NULL.
- * @param uap   Known 8-bit Upper Address Part.
- * @param clk6  Known CLK1-6 (0–63) valid for this packet.
- */
-void           bredr_print_packet_decoded(const bredr_packet_t *pkt,
-                                          uint8_t uap, uint8_t clk6);
 
 /**
  * @brief Generate a 64-bit BR/EDR sync word from a 24-bit LAP.

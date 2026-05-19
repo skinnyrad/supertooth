@@ -57,22 +57,26 @@ static void receiver_hybrid_bredr_bridge(const decoded_packet_t *packet,
                                          const receiver_bredr_piconet_snapshot_t *piconet,
                                          void *user)
 {
-    (void)piconet;
     receiver_session_t *session = (receiver_session_t *)user;
     if (!session || !packet || packet->protocol != PROTO_BREDR)
         return;
 
-    session->hybrid_total_packets++;
-    if (!session->hybrid_callbacks.on_bredr_packet)
-        return;
+    receiver_hybrid_callbacks_t callbacks;
+    receiver_bredr_piconet_snapshot_t snapshot;
+    const receiver_bredr_piconet_snapshot_t *snapshot_ptr = NULL;
 
-    const bredr_packet_t *pkt = &packet->u.bredr;
-    uint32_t clkn = receiver_bredr_sample_to_clkn(session, packet->meta.start_sample);
-    session->hybrid_callbacks.on_bredr_packet(pkt->lap,
-                                              clkn,
-                                              pkt->ac_errors,
-                                              &packet->meta,
-                                              session->hybrid_callbacks.user);
+    pthread_mutex_lock(&session->decoded_packet_mutex);
+    session->hybrid_total_packets++;
+    callbacks = session->hybrid_callbacks;
+    if (piconet)
+    {
+        snapshot = *piconet;
+        snapshot_ptr = &snapshot;
+    }
+    pthread_mutex_unlock(&session->decoded_packet_mutex);
+
+    if (callbacks.on_bredr_packet)
+        callbacks.on_bredr_packet(packet, snapshot_ptr, callbacks.user);
 }
 
 static int receiver_hybrid_start_thread_pool(receiver_session_t *session)

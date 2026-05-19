@@ -21,9 +21,10 @@ static const app_output_mode_option_t s_output_modes[] = {
 static app_output_mode_t g_output_mode = APP_OUTPUT_MODE_FULL;
 
 static void print_ble_packet_full(unsigned long packet_no,
-                                  const ble_packet_t *pkt,
-                                  const rx_metadata_t *meta)
+                                  const decoded_packet_t *packet)
 {
+    const ble_packet_t *pkt = &packet->u.ble;
+    const rx_metadata_t *meta = &packet->meta;
     printf("\n------------------ Packet #%lu --------------------\n", packet_no);
     printf("[RX Info]\n");
     printf("Sample Index : %" PRIu64 " (%u Msps master clock)\n",
@@ -37,9 +38,10 @@ static void print_ble_packet_full(unsigned long packet_no,
 }
 
 static void print_ble_packet_summary(unsigned long packet_no,
-                                     const ble_packet_t *pkt,
-                                     const rx_metadata_t *meta)
+                                     const decoded_packet_t *packet)
 {
+    const ble_packet_t *pkt = &packet->u.ble;
+    const rx_metadata_t *meta = &packet->meta;
     uint8_t pdu_type = pkt->pdu[0] & 0x0Fu;
     const char *pdu_name = app_ble_pdu_type_name(pdu_type);
     const uint8_t *addr = NULL;
@@ -56,11 +58,11 @@ static void print_ble_packet_summary(unsigned long packet_no,
 }
 
 static void print_bredr_packet_full(unsigned long packet_no,
-                                    uint32_t lap,
-                                    uint32_t clkn,
-                                    int ac_errors,
-                                    const rx_metadata_t *meta)
+                                    const decoded_packet_t *packet,
+                                    const receiver_bredr_piconet_snapshot_t *pnet)
 {
+    const bredr_packet_t *pkt = &packet->u.bredr;
+    const rx_metadata_t *meta = &packet->meta;
     printf("\n------------------ Packet #%lu --------------------\n", packet_no);
     printf("[RX Info]\n");
     printf("Sample Index : %" PRIu64 " (%u Msps master clock)\n",
@@ -70,20 +72,57 @@ static void print_bredr_packet_full(unsigned long packet_no,
            (unsigned int)(meta->center_frequency_hz / 1000000u), meta->channel_index);
     printf("RSSI         : %.2f dBr\n\n", meta->rssi_dbr);
     printf("[BR/EDR Packet Info]\n");
-    printf("LAP          : 0x%06" PRIX32 "\n", lap & 0xFFFFFFu);
-    printf("CLKN         : %u\n", clkn);
-    printf("AC Errors    : %d\n", ac_errors);
+    printf("LAP          : 0x%06" PRIX32 "\n", pkt->lap & 0xFFFFFFu);
+    printf("AC Errors    : %u\n", pkt->ac_errors);
+    if (pkt->has_header)
+        printf("HEADER       : 0x%014" PRIX64 "\n",
+               pkt->header_raw & 0x003FFFFFFFFFFFFFull);
+    else
+        printf("HEADER       : (none — shortened access code)\n");
+    if (pnet)
+    {
+        printf("\n[Piconet Info]\n");
+        printf("Packets      : %lu\n", pnet->total_packets);
+        if (pnet->uap_found)
+            printf("UAP          : 0x%02X\n", pnet->uap);
+        else
+            printf("UAP          : 0x??\n");
+        if (pnet->clk_known)
+            printf("CLK1-6       : %u\n", pnet->central_clk_1_6);
+        else
+            printf("CLK1-6       : ??\n");
+        printf("Tracking     : %d\n", pnet->tracking_state);
+    }
     printf("--------------------------------------------------\n");
 }
 
 static void print_bredr_packet_summary(unsigned long packet_no,
-                                       uint32_t lap,
-                                       uint32_t clkn,
-                                       int ac_errors,
-                                       const rx_metadata_t *meta)
+                                       const decoded_packet_t *packet,
+                                       const receiver_bredr_piconet_snapshot_t *pnet)
 {
-    printf("pkt=%-6lu type=BREDR lap=%06" PRIX32 " ch=%02u ac=%d clkn=%u rssi=%.1f\n",
-           packet_no, lap & 0xFFFFFFu, meta->channel_index, ac_errors, clkn, meta->rssi_dbr);
+    const bredr_packet_t *pkt = &packet->u.bredr;
+    const rx_metadata_t *meta = &packet->meta;
+    char uap_buf[8];
+    char clk_buf[8];
+
+    if (pnet && pnet->uap_found)
+        snprintf(uap_buf, sizeof(uap_buf), "%02X", pnet->uap);
+    else
+        snprintf(uap_buf, sizeof(uap_buf), "??");
+    if (pnet && pnet->clk_known)
+        snprintf(clk_buf, sizeof(clk_buf), "%02u", pnet->central_clk_1_6);
+    else
+        snprintf(clk_buf, sizeof(clk_buf), "??");
+
+    printf("pkt=%-6lu type=BREDR lap=%06" PRIX32 " uap=%s ch=%02u ac=%u clk=%s track=%d rssi=%.1f\n",
+           packet_no,
+           pkt->lap & 0xFFFFFFu,
+           uap_buf,
+           meta->channel_index,
+           pkt->ac_errors,
+           clk_buf,
+           pnet ? pnet->tracking_state : -1,
+           meta->rssi_dbr);
 }
 
 static void print_usage(const char *argv0)
@@ -93,32 +132,33 @@ static void print_usage(const char *argv0)
     fprintf(stderr, "  %-30s Print block-drop diagnostics\n", "-d, --debug");
 }
 
-static void handle_hybrid_bredr_packet(uint32_t lap,
-                                       uint32_t clkn,
-                                       int ac_errors,
-                                       const rx_metadata_t *meta,
+static void handle_hybrid_bredr_packet(const decoded_packet_t *packet,
+                                       const receiver_bredr_piconet_snapshot_t *pnet,
                                        void *user)
 {
     (void)user;
+    app_output_lock();
     unsigned long packet_no = ++g_packet_count;
     if (g_output_mode == APP_OUTPUT_MODE_SUMMARY)
-        print_bredr_packet_summary(packet_no, lap, clkn, ac_errors, meta);
+        print_bredr_packet_summary(packet_no, packet, pnet);
     else
-        print_bredr_packet_full(packet_no, lap, clkn, ac_errors, meta);
+        print_bredr_packet_full(packet_no, packet, pnet);
     fflush(stdout);
+    app_output_unlock();
 }
 
-static void handle_hybrid_ble_packet(const ble_packet_t *pkt,
-                                     const rx_metadata_t *meta,
+static void handle_hybrid_ble_packet(const decoded_packet_t *packet,
                                      void *user)
 {
     (void)user;
+    app_output_lock();
     unsigned long packet_no = ++g_packet_count;
     if (g_output_mode == APP_OUTPUT_MODE_SUMMARY)
-        print_ble_packet_summary(packet_no, pkt, meta);
+        print_ble_packet_summary(packet_no, packet);
     else
-        print_ble_packet_full(packet_no, pkt, meta);
+        print_ble_packet_full(packet_no, packet);
     fflush(stdout);
+    app_output_unlock();
 }
 
 int main(int argc, char *argv[])

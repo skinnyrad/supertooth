@@ -54,14 +54,15 @@ void receiver_hybrid_destroy_ble(receiver_session_t *session)
 }
 
 void receiver_hybrid_process_ble(receiver_hybrid_ble_ctx_t *ble,
-                                 const receiver_bredr_block_t *blk)
+                                 receiver_bredr_block_t *blk)
 {
     receiver_session_t *session = ble->session;
     nco_crcf_mix_block_down(ble->nco, blk->samples, ble->mixed, blk->num_samples);
     unsigned int decimated_samples = blk->num_samples / RECEIVER_HYBRID_DECIMATION;
     firdecim_crcf_execute_block(ble->firdec, ble->mixed, decimated_samples, ble->decimated);
     unsigned long long buf_start = blk->block_base_sample / RECEIVER_HYBRID_DECIMATION;
-    for (unsigned int i = 0; i < decimated_samples; i += RECEIVER_BLE_SAMPLES_PER_SYMBOL)
+    for (unsigned int i = 0; i + RECEIVER_BLE_SAMPLES_PER_SYMBOL <= decimated_samples;
+         i += RECEIVER_BLE_SAMPLES_PER_SYMBOL)
     {
         unsigned int sym = cpfskdem_demodulate(ble->demod, &ble->decimated[i]);
         uint8_t bit = (uint8_t)(sym & 0x01u);
@@ -84,19 +85,29 @@ void receiver_hybrid_process_ble(receiver_hybrid_ble_ctx_t *ble,
         ble_packet_t pkt;
         if (ble_get_packet(&ble->ble_proc, &pkt) != 0)
             continue;
-        float rssi_dbr = receiver_rssi_from_mean_power_range(ble->decimated, rssi_start, rssi_end, 0.0f);
+        float rssi_dbr =
+            receiver_rssi_from_mean_power_range(ble->decimated, rssi_start, rssi_end,
+                                                RECEIVER_RSSI_INVALID);
         unsigned long long abs_sample = (buf_start + i) * RECEIVER_HYBRID_DECIMATION;
         rx_metadata_t meta = receiver_make_metadata(abs_sample,
                                                     BLE_CH37_FREQ_HZ,
                                                     BLE_CH37_INDEX,
                                                     rssi_dbr,
                                                     255u);
+        decoded_packet_t decoded = {
+            .protocol = PROTO_BLE,
+            .meta = meta,
+        };
+        decoded.u.ble = pkt;
+
+        receiver_hybrid_callbacks_t callbacks;
         pthread_mutex_lock(&session->decoded_packet_mutex);
         session->hybrid_total_packets++;
-        if (session->hybrid_callbacks.on_ble_packet)
-            session->hybrid_callbacks.on_ble_packet(&pkt, &meta,
-                                                    session->hybrid_callbacks.user);
+        callbacks = session->hybrid_callbacks;
         pthread_mutex_unlock(&session->decoded_packet_mutex);
+
+        if (callbacks.on_ble_packet)
+            callbacks.on_ble_packet(&decoded, callbacks.user);
     }
 }
 

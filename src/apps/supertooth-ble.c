@@ -107,12 +107,14 @@ static void handle_ble_packet(const decoded_packet_t *packet,
                              void *user)
 {
     (void)user;
+    app_output_lock();
     unsigned long packet_no = ++g_packet_count;
     if (g_output_mode == APP_OUTPUT_MODE_SUMMARY)
         print_ble_packet_summary(packet_no, packet);
     else
         print_ble_packet_full(packet_no, packet);
     fflush(stdout);
+    app_output_unlock();
 }
 
 // --- Main --------------------------------------------------------------------

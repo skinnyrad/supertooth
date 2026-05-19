@@ -484,9 +484,11 @@ static void handle_bredr_packet(const decoded_packet_t *packet,
                                 void *user)
 {
     (void)user;
+    app_output_lock();
     g_total_packets++;
     output_mode_formatter(g_output_mode)(g_total_packets, packet, pnet);
     fflush(stdout);
+    app_output_unlock();
 }
 
 /* -------------------------------------------------------------------------

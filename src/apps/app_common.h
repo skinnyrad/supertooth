@@ -28,6 +28,8 @@ const app_output_mode_option_t *app_output_mode_option(app_output_mode_t mode,
 const char *app_output_mode_name(app_output_mode_t mode,
                                  const app_output_mode_option_t *options,
                                  size_t option_count);
+void app_output_lock(void);
+void app_output_unlock(void);
 void app_install_sigint_handler(receiver_session_t **session_slot);
 
 #endif

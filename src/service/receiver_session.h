@@ -104,14 +104,11 @@ typedef struct
     void *user;
 } receiver_bredr_callbacks_t;
 
-typedef void (*receiver_hybrid_bredr_packet_fn)(uint32_t lap,
-                                                uint32_t clkn,
-                                                int ac_errors,
-                                                const rx_metadata_t *meta,
+typedef void (*receiver_hybrid_bredr_packet_fn)(const decoded_packet_t *packet,
+                                                const receiver_bredr_piconet_snapshot_t *piconet,
                                                 void *user);
 
-typedef void (*receiver_hybrid_ble_packet_fn)(const ble_packet_t *pkt,
-                                              const rx_metadata_t *meta,
+typedef void (*receiver_hybrid_ble_packet_fn)(const decoded_packet_t *packet,
                                               void *user);
 
 typedef struct

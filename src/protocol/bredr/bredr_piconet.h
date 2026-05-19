@@ -180,9 +180,9 @@ extern "C"
      * candidates using
      * the known UAP's HEC.
      *
-     * If a non-zero pkt->rssi is present and the clock is known, the latest
-     * role RSSI is updated: master (CLK1 == 0) or slave (CLK1 == 1, indexed by
-     * LT_ADDR).
+     * If packet metadata includes a valid RSSI value and the clock is known,
+     * the latest role RSSI is updated: master (CLK1 == 0) or slave
+     * (CLK1 == 1, indexed by LT_ADDR).
      *
      * @param pnet  Must not be NULL and must have been initialised.
     * @param packet Decoded packet to add. Must not be NULL and must be BR/EDR.
@@ -229,42 +229,6 @@ extern "C"
      * @param window  EMA window in packets. 0 disables averaging.
      */
     void bredr_piconet_set_rssi_averaging(unsigned int window);
-
-    /**
-     * @brief Return the latest RSSI (dBr) for master transmissions.
-     *
-     * @return Latest RSSI in dBr, or NAN if no master packets with RSSI have
-     *         been received.
-     */
-    float bredr_piconet_master_rssi(const bredr_piconet_t *pnet);
-
-    /**
-     * @brief Return the latest RSSI (dBr) for a specific slave LT_ADDR.
-     *
-     * @param lt_addr  LT_ADDR to query (0–7).
-     * @return Latest RSSI in dBr, or NAN if no packets with RSSI have been
-     *         received for this LT_ADDR.
-     */
-    float bredr_piconet_slave_rssi(const bredr_piconet_t *pnet, uint8_t lt_addr);
-
-    /**
-     * @brief Return the first packet rx_clk_1600 value.
-     *
-     * Returns 0 if no packets have been added yet.
-     */
-    uint32_t bredr_piconet_get_first_seen(const bredr_piconet_t *pnet);
-
-    /**
-     * @brief Return the most recent packet rx_clk_1600 value.
-     *
-     * Returns 0 if no packets have been added yet.
-     */
-    uint32_t bredr_piconet_get_last_seen(const bredr_piconet_t *pnet);
-
-    /**
-     * @brief Print a human-readable summary of this piconet to stdout.
-     */
-    void bredr_piconet_print(const bredr_piconet_t *pnet);
 
 #ifdef __cplusplus
 }

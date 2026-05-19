@@ -25,9 +25,7 @@
 
 #include <string.h>
 #include <stdlib.h>
-#include <stdio.h>
 #include <math.h>
-#include <inttypes.h>
 
 /* ---------------------------------------------------------------------------
  * RSSI averaging configuration
@@ -200,7 +198,7 @@ void bredr_piconet_add_packet(bredr_piconet_t *pnet,
     int has_active_track = (pnet->uap_found && pnet->clk_known && pnet->tracking_state > 0);
 
     /* Before track lock, keep only latest aggregate RSSI. */
-    if (!has_active_track && meta->rssi_dbr != 0.0f)
+    if (!has_active_track && !isnan(meta->rssi_dbr))
     {
         pnet->combined_rssi =
             update_rssi_value(pnet->combined_rssi, pnet->combined_rssi_seen, meta->rssi_dbr);
@@ -215,7 +213,7 @@ void bredr_piconet_add_packet(bredr_piconet_t *pnet,
     int hec_ok = 0;
     if (pkt->ac_errors <= 1u)
         hec_ok = update_clock(pnet, pkt);
-    if (!hec_ok || meta->rssi_dbr == 0.0f)
+    if (!hec_ok || isnan(meta->rssi_dbr))
         return;
 
     /* rx_clk_1600 is slot clock (CLKN >> 1), so bit0 == CLK1 parity.
@@ -235,78 +233,4 @@ void bredr_piconet_add_packet(bredr_piconet_t *pnet,
             update_rssi_value(pnet->slave_rssi[lt], pnet->slave_rssi_seen[lt], meta->rssi_dbr);
         pnet->slave_rssi_seen[lt] = 1;
     }
-}
-
-float bredr_piconet_master_rssi(const bredr_piconet_t *pnet)
-{
-    if (!pnet || !pnet->master_rssi_seen)
-        return (float)NAN;
-    return pnet->master_rssi;
-}
-
-float bredr_piconet_slave_rssi(const bredr_piconet_t *pnet, uint8_t lt_addr)
-{
-    if (!pnet || lt_addr > 7u || !pnet->slave_rssi_seen[lt_addr])
-        return (float)NAN;
-    return pnet->slave_rssi[lt_addr];
-}
-
-uint32_t bredr_piconet_get_first_seen(const bredr_piconet_t *pnet)
-{
-    return pnet ? pnet->first_seen : 0u;
-}
-
-uint32_t bredr_piconet_get_last_seen(const bredr_piconet_t *pnet)
-{
-    return pnet ? pnet->last_seen : 0u;
-}
-
-void bredr_piconet_print(const bredr_piconet_t *pnet)
-{
-    if (!pnet)
-        return;
-
-    printf("  LAP: 0x%06" PRIX32, pnet->lap & 0xFFFFFFu);
-
-    if (pnet->uap_found)
-        printf("  UAP: 0x%02X", pnet->uap);
-    else
-        printf("  UAP: ??");
-
-    if (pnet->clk_known)
-    {
-        printf("  CLK1-6: %02d [state=%d]",
-               pnet->central_clk_1_6,
-               pnet->tracking_state);
-    }
-    else
-    {
-        printf("  CLK: unknown [state=%d]", pnet->tracking_state);
-    }
-
-    double first_s = pnet->first_seen * 625.0e-6;
-    double last_s = pnet->last_seen * 625.0e-6;
-    printf("  First: CLK %07" PRIu32 " (~%.3f s)"
-           "  Last: CLK %07" PRIu32 " (~%.3f s)",
-           pnet->first_seen, first_s,
-           pnet->last_seen, last_s);
-
-    printf("  Pkts: %lu", pnet->total_packets);
-
-    /* RSSI summary */
-    if (pnet->combined_rssi_seen)
-        printf("  Combined RSSI: %.1f dBr", pnet->combined_rssi);
-
-    float mr = bredr_piconet_master_rssi(pnet);
-    if (!isnan(mr))
-        printf("  Master RSSI: %.1f dBr", mr);
-
-    for (int i = 1; i <= 7; i++)
-    {
-        float sr = bredr_piconet_slave_rssi(pnet, (uint8_t)i);
-        if (!isnan(sr))
-            printf("  Slave[%d] RSSI: %.1f dBr", i, sr);
-    }
-
-    printf("\n");
 }

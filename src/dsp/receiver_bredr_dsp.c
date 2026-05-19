@@ -97,7 +97,7 @@ void receiver_bredr_destroy_channel_ctx(receiver_session_t *session)
 }
 
 void receiver_bredr_process_channel(receiver_bredr_channel_ctx_t *ctx,
-                                    const receiver_bredr_block_t *blk)
+                                    receiver_bredr_block_t *blk)
 {
     receiver_session_t *session = ctx->session;
     nco_crcf_mix_block_down(ctx->nco, blk->samples, ctx->mixed, blk->num_samples);
@@ -140,13 +140,15 @@ void receiver_bredr_process_channel(receiver_bredr_channel_ctx_t *ctx,
         uint32_t clkn = receiver_bredr_sample_to_clkn(session, abs_raw);
         pkt.rx_clk_ref = abs_raw;
         pkt.rx_clk_1600 = receiver_bredr_sample_to_rx_clk_1600(session, abs_raw);
-        pkt.rssi = receiver_rssi_from_mean_power_range(ctx->decimated, rssi_start, rssi_end, 0.0f);
+        float rssi_dbr =
+            receiver_rssi_from_mean_power_range(ctx->decimated, rssi_start, rssi_end,
+                                                RECEIVER_RSSI_INVALID);
         rx_metadata_t meta = receiver_make_metadata(abs_raw,
                                                     (uint32_t)(RECEIVER_BREDR_CHANNEL_0_FREQ +
                                                                (double)ctx->bredr_channel *
                                                                    RECEIVER_BREDR_CHANNEL_BW),
                                                     (uint16_t)ctx->bredr_channel,
-                                                    pkt.rssi,
+                                                    rssi_dbr,
                                                     (uint8_t)(255u - pkt.ac_errors));
         decoded_packet_t decoded = {
             .protocol = PROTO_BREDR,
@@ -157,6 +159,7 @@ void receiver_bredr_process_channel(receiver_bredr_channel_ctx_t *ctx,
         pthread_mutex_lock(&session->decoded_packet_mutex);
         bredr_piconet_t *pnet =
             bredr_piconet_store_add_packet(&session->bredr_store, &decoded, clkn);
+        receiver_bredr_callbacks_t callbacks = session->bredr_callbacks;
         receiver_bredr_piconet_snapshot_t snapshot;
         receiver_bredr_piconet_snapshot_t *snapshot_ptr = NULL;
         if (pnet)
@@ -169,10 +172,10 @@ void receiver_bredr_process_channel(receiver_bredr_channel_ctx_t *ctx,
             session->bredr_header_packets++;
         else
             session->bredr_id_packets++;
-        if (session->bredr_callbacks.on_packet)
-            session->bredr_callbacks.on_packet(&decoded, snapshot_ptr,
-                                               session->bredr_callbacks.user);
         pthread_mutex_unlock(&session->decoded_packet_mutex);
+
+        if (callbacks.on_packet)
+            callbacks.on_packet(&decoded, snapshot_ptr, callbacks.user);
     }
 
     __atomic_add_fetch(&session->bredr_total_bits, local_bits, __ATOMIC_RELAXED);
