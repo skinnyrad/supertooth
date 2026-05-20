@@ -97,7 +97,7 @@ static int receiver_hybrid_start_thread_pool(receiver_session_t *session)
     }
 
     if (pthread_create(&session->hybrid_worker_threads[RECEIVER_BREDR_MAX_CHANNELS], NULL,
-                       receiver_hybrid_ble_worker, &session->hybrid_ble_ctx) != 0)
+                       receiver_hybrid_ble_worker, session->hybrid_ble_ctx) != 0)
         return -1;
 
     session->hybrid_worker_count++;
@@ -113,9 +113,9 @@ static void receiver_hybrid_stop_thread_pool(receiver_session_t *session)
         pthread_cond_signal(&session->bredr_ctx[i].queue_cv);
         pthread_mutex_unlock(&session->bredr_ctx[i].queue_mutex);
     }
-    pthread_mutex_lock(&session->hybrid_ble_ctx.queue_mutex);
-    pthread_cond_signal(&session->hybrid_ble_ctx.queue_cv);
-    pthread_mutex_unlock(&session->hybrid_ble_ctx.queue_mutex);
+    pthread_mutex_lock(&session->hybrid_ble_ctx->queue_mutex);
+    pthread_cond_signal(&session->hybrid_ble_ctx->queue_cv);
+    pthread_mutex_unlock(&session->hybrid_ble_ctx->queue_mutex);
     for (unsigned int i = 0; i < session->hybrid_worker_count; i++)
         pthread_join(session->hybrid_worker_threads[i], NULL);
     free(session->hybrid_worker_threads);
@@ -224,7 +224,7 @@ int receiver_session_run_hybrid(receiver_session_t *session,
         stats_out->bredr_channel_count = RECEIVER_BREDR_MAX_CHANNELS;
         for (unsigned int i = 0; i < RECEIVER_BREDR_MAX_CHANNELS; i++)
             stats_out->bredr_channel_dropped_blocks[i] = session->bredr_ctx[i].dropped_blocks;
-        stats_out->ble_dropped_blocks = session->hybrid_ble_ctx.dropped_blocks;
+        stats_out->ble_dropped_blocks = session->hybrid_ble_ctx->dropped_blocks;
     }
 
     receiver_hybrid_destroy_ble(session);

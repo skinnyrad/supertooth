@@ -6,7 +6,7 @@
 
 int receiver_hybrid_setup_ble(receiver_session_t *session)
 {
-    receiver_hybrid_ble_ctx_t *ble = &session->hybrid_ble_ctx;
+    receiver_hybrid_ble_ctx_t *ble = session->hybrid_ble_ctx;
     memset(ble, 0, sizeof(*ble));
     ble->session = session;
     ble->nco = nco_crcf_create(LIQUID_NCO);
@@ -36,7 +36,7 @@ int receiver_hybrid_setup_ble(receiver_session_t *session)
 
 void receiver_hybrid_destroy_ble(receiver_session_t *session)
 {
-    receiver_hybrid_ble_ctx_t *ble = &session->hybrid_ble_ctx;
+    receiver_hybrid_ble_ctx_t *ble = session->hybrid_ble_ctx;
     if (ble->demod) cpfskdem_destroy(ble->demod);
     if (ble->firdec) firdecim_crcf_destroy(ble->firdec);
     if (ble->nco) nco_crcf_destroy(ble->nco);
@@ -143,7 +143,7 @@ int receiver_hybrid_cb(hackrf_transfer *transfer)
     session->bredr_pool_write_idx = ((unsigned int)block_idx + 1u) % RECEIVER_BREDR_BLOCK_POOL_SIZE;
     __atomic_thread_fence(__ATOMIC_RELEASE);
     receiver_dispatch_block_to_bredr_channels(session, (unsigned int)block_idx);
-    receiver_hybrid_ble_ctx_t *ble = &session->hybrid_ble_ctx;
+    receiver_hybrid_ble_ctx_t *ble = session->hybrid_ble_ctx;
     pthread_mutex_lock(&ble->queue_mutex);
     if (ble->block_count == RECEIVER_BREDR_CHANNEL_RING_SIZE)
     {

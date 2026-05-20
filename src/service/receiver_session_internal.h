@@ -88,7 +88,7 @@ struct receiver_session
 
     cpfskdem demod;
     ble_channel_processor_t ble_proc;
-    float complex raw[RECEIVER_BLE_BUFFER_SIZE / 2u];
+    float complex *raw;
 
     unsigned long long total_samples;
     long long pkt_start_abs;
@@ -102,8 +102,8 @@ struct receiver_session
     receiver_bredr_config_t bredr_config;
     receiver_bredr_callbacks_t bredr_callbacks;
     bredr_piconet_store_t bredr_store;
-    receiver_bredr_channel_ctx_t bredr_ctx[RECEIVER_BREDR_MAX_CHANNELS];
-    receiver_bredr_block_t bredr_block_pool[RECEIVER_BREDR_BLOCK_POOL_SIZE];
+    receiver_bredr_channel_ctx_t *bredr_ctx;
+    receiver_bredr_block_t *bredr_block_pool;
     pthread_t *bredr_worker_threads;
     unsigned int bredr_worker_count;
     unsigned int bredr_sample_rate;
@@ -122,7 +122,7 @@ struct receiver_session
 
     receiver_hybrid_config_t hybrid_config;
     receiver_hybrid_callbacks_t hybrid_callbacks;
-    receiver_hybrid_ble_ctx_t hybrid_ble_ctx;
+    receiver_hybrid_ble_ctx_t *hybrid_ble_ctx;
     pthread_t *hybrid_worker_threads;
     unsigned int hybrid_worker_count;
     unsigned int hybrid_shutdown_requested;
