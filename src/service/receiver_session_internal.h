@@ -82,6 +82,8 @@ typedef struct
 struct receiver_session
 {
     volatile sig_atomic_t stop_requested;
+    pthread_mutex_t stop_mutex;
+    pthread_cond_t  stop_cv;
     int debug;
 
     cpfskdem demod;

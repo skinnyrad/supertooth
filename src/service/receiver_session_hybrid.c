@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+#include <time.h>
 
 static void *receiver_hybrid_bredr_worker(void *arg)
 {
@@ -194,8 +194,21 @@ int receiver_session_run_hybrid(receiver_session_t *session,
             result = hackrf_start_rx(device, receiver_hybrid_cb, session);
         if (result == HACKRF_SUCCESS)
         {
+            /* Block until receiver_session_request_stop() signals stop_cv. */
+            pthread_mutex_lock(&session->stop_mutex);
             while (!session->stop_requested)
-                sleep(1);
+            {
+                struct timespec ts;
+                clock_gettime(CLOCK_REALTIME, &ts);
+                ts.tv_nsec += 200000000L;
+                if (ts.tv_nsec >= 1000000000L)
+                {
+                    ts.tv_sec++;
+                    ts.tv_nsec -= 1000000000L;
+                }
+                pthread_cond_timedwait(&session->stop_cv, &session->stop_mutex, &ts);
+            }
+            pthread_mutex_unlock(&session->stop_mutex);
             hackrf_stop_rx(device);
         }
         hackrf_disconnect(device);

@@ -82,20 +82,29 @@ receiver_session_t *receiver_session_create(void)
     session->pkt_start_abs = -1;
     session->prev_status = BLE_SEARCHING;
     pthread_mutex_init(&session->decoded_packet_mutex, NULL);
+    pthread_mutex_init(&session->stop_mutex, NULL);
+    pthread_cond_init(&session->stop_cv, NULL);
     return session;
 }
 
 void receiver_session_destroy(receiver_session_t *session)
 {
     if (session)
+    {
+        pthread_cond_destroy(&session->stop_cv);
+        pthread_mutex_destroy(&session->stop_mutex);
         pthread_mutex_destroy(&session->decoded_packet_mutex);
+    }
     free(session);
 }
 
 void receiver_session_request_stop(receiver_session_t *session)
 {
-    if (session)
-        session->stop_requested = 1;
+    if (!session)
+        return;
+    session->stop_requested = 1;
+    /* pthread_cond_broadcast is async-signal-safe per POSIX (no mutex needed). */
+    pthread_cond_broadcast(&session->stop_cv);
 }
 
 size_t receiver_session_bredr_piconet_count(receiver_session_t *session)
