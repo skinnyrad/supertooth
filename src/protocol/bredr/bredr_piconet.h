@@ -189,7 +189,10 @@ extern "C"
      */
     void bredr_piconet_add_packet(bredr_piconet_t *pnet,
                             const bredr_event_t *event,
-                            uint32_t rx_clk_1600);
+                            uint32_t rx_clk_1600,
+                            unsigned int rssi_window,
+                            float rssi_alpha,
+                            float rssi_one_minus_alpha);
 
     /**
      * @brief Record the UAP and initial CLK1-6, as solved by libbtbb.
@@ -218,18 +221,6 @@ extern "C"
      */
     void bredr_piconet_set_uap_only(bredr_piconet_t *pnet, uint8_t uap);
 
-    /**
-     * @brief Configure exponential RSSI averaging for piconet RSSI fields.
-     *
-     * Applies to combined, master, and slave RSSI values maintained by
-     * bredr_piconet_add_packet().
-     *
-     * Averaging uses an EMA with alpha = 2 / (window + 1). For window=0,
-     * averaging is disabled and values are replaced by each new sample.
-     *
-     * @param window  EMA window in packets. 0 disables averaging.
-     */
-    void bredr_piconet_set_rssi_averaging(unsigned int window);
 
 #ifdef __cplusplus
 }

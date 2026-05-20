@@ -5,6 +5,22 @@
 #include <stdio.h>
 #include <string.h>
 
+static unsigned long long receiver_bredr_event_bits_back(const bredr_frame_t *frame)
+{
+    if (!frame)
+        return 0ULL;
+
+    if (frame->has_header)
+        return (unsigned long long)(BREDR_AC_BITS - 1u + 54u) +
+               (unsigned long long)frame->payload_bits;
+
+    if ((frame->lap & 0xFFFFFFu) == BREDR_LAP_GIAC ||
+        (frame->lap & 0xFFFFFFu) == BREDR_LAP_LIAC)
+        return 67ULL;
+
+    return (unsigned long long)(BREDR_AC_BITS - 1u);
+}
+
 void receiver_bredr_update_layout(receiver_session_t *session)
 {
     unsigned int channel_count = session->bredr_config.channel_count;
@@ -125,9 +141,7 @@ void receiver_bredr_process_channel(receiver_bredr_channel_ctx_t *ctx,
             continue;
 
         unsigned long long bit_in_block = (unsigned long long)(i / RECEIVER_BREDR_SYMBOL_STEP);
-        unsigned long long bits_back = frame.has_header
-            ? (58ULL + (unsigned long long)frame.payload_bits)
-            : 0ULL;
+        unsigned long long bits_back = receiver_bredr_event_bits_back(&frame);
         unsigned long long ac_bit_in_block = (bit_in_block >= bits_back)
             ? (bit_in_block - bits_back)
             : 0ULL;
@@ -243,11 +257,7 @@ int receiver_bredr_rx_cb(hackrf_transfer *transfer)
     blk->block_base_sample = block_base;
 
     for (unsigned int i = 0; i < num_samples; i++)
-    {
-        float i_sample = samples[2u * i] / 128.0f;
-        float q_sample = samples[2u * i + 1u] / 128.0f;
-        blk->samples[i] = i_sample + q_sample * _Complex_I;
-    }
+        blk->samples[i] = hackrf_iq_to_complex(samples, i);
 
     session->bredr_pool_write_idx = ((unsigned int)block_idx + 1u) % RECEIVER_BREDR_BLOCK_POOL_SIZE;
     __atomic_thread_fence(__ATOMIC_RELEASE);

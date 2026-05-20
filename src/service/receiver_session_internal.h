@@ -5,6 +5,7 @@
 
 #include <complex.h>
 #include <pthread.h>
+#include <signal.h>
 
 #include <liquid/liquid.h>
 
@@ -80,7 +81,7 @@ typedef struct
 
 struct receiver_session
 {
-    volatile int stop_requested;
+    volatile sig_atomic_t stop_requested;
     int debug;
 
     cpfskdem demod;

@@ -31,45 +31,14 @@
  * RSSI averaging configuration
  * ---------------------------------------------------------------------------*/
 
-#define BREDR_RSSI_AVG_WINDOW_DEFAULT 16u
-
-static unsigned int g_rssi_avg_window = BREDR_RSSI_AVG_WINDOW_DEFAULT;
-static float g_rssi_avg_alpha = 2.0f / ((float)BREDR_RSSI_AVG_WINDOW_DEFAULT + 1.0f);
-static float g_rssi_avg_one_minus_alpha = 1.0f - (2.0f / ((float)BREDR_RSSI_AVG_WINDOW_DEFAULT + 1.0f));
-
-static float update_rssi_value(float current, int seen, float sample)
+static float update_rssi_value(float current, int seen, float sample,
+                               unsigned int window, float alpha,
+                               float one_minus_alpha)
 {
-    if (!seen || g_rssi_avg_window == 0u)
+    if (!seen || window == 0u)
         return sample;
 
-    return g_rssi_avg_alpha * sample + g_rssi_avg_one_minus_alpha * current;
-}
-
-/* ---------------------------------------------------------------------------
- * HEC verification for a given CLK1-6 and known UAP
- * ---------------------------------------------------------------------------*/
-
-/**
- * Returns 1 if clk6 + uap produce a header with matching HEC, 0 otherwise.
- *
- * Delegates FEC decode and unwhitening to bredr_decode_header_bits().
- * bredr_compute_hec() returns bit 7 = first transmitted; we assemble
- * received_hec with the same convention (bit 7 = bits[10]).
- */
-static int check_hec_for_clk6(const bredr_frame_t *frame, uint8_t uap, int clk6)
-{
-    uint8_t bits[18];
-    bredr_decode_header_bits(frame, (uint8_t)(clk6 & 0x3f), bits);
-
-    uint16_t hdr_data = 0;
-    for (int i = 0; i < 10; i++)
-        hdr_data |= (uint16_t)(bits[i] << i);
-
-    uint8_t received_hec = 0;
-    for (int i = 0; i < 8; i++)
-        received_hec |= (uint8_t)(bits[10 + i] << (7 - i));
-
-    return (bredr_compute_hec(hdr_data, uap) == received_hec);
+    return alpha * sample + one_minus_alpha * current;
 }
 
 /* ---------------------------------------------------------------------------
@@ -95,7 +64,7 @@ static int update_clock(bredr_piconet_t *pnet,
     for (int k = 0; k < 5; k++)
     {
         int candidate = ((expected_clk6 + offsets[k]) + 64) % 64;
-        if (check_hec_for_clk6(frame, pnet->uap, candidate))
+        if (bredr_hec_ok_for_clk6(frame, pnet->uap, (uint8_t)candidate))
         {
             pnet->central_clk_1_6 = (uint8_t)candidate;
             pnet->last_successful_rx_clk_1600 = rx_clk_1600;
@@ -162,24 +131,12 @@ void bredr_piconet_set_uap_only(bredr_piconet_t *pnet, uint8_t uap)
     pnet->tracking_state = -1;
 }
 
-void bredr_piconet_set_rssi_averaging(unsigned int window)
-{
-    g_rssi_avg_window = window;
-    if (window == 0u)
-    {
-        g_rssi_avg_alpha = 1.0f;
-        g_rssi_avg_one_minus_alpha = 0.0f;
-    }
-    else
-    {
-        g_rssi_avg_alpha = 2.0f / ((float)window + 1.0f);
-        g_rssi_avg_one_minus_alpha = 1.0f - g_rssi_avg_alpha;
-    }
-}
-
 void bredr_piconet_add_packet(bredr_piconet_t *pnet,
                               const bredr_event_t *event,
-                              uint32_t rx_clk_1600)
+                              uint32_t rx_clk_1600,
+                              unsigned int rssi_window,
+                              float rssi_alpha,
+                              float rssi_one_minus_alpha)
 {
     if (!pnet || !event)
         return;
@@ -204,7 +161,8 @@ void bredr_piconet_add_packet(bredr_piconet_t *pnet,
     if (!has_active_track && !isnan(meta->rssi_dbr))
     {
         pnet->combined_rssi =
-            update_rssi_value(pnet->combined_rssi, pnet->combined_rssi_seen, meta->rssi_dbr);
+            update_rssi_value(pnet->combined_rssi, pnet->combined_rssi_seen, meta->rssi_dbr,
+                              rssi_window, rssi_alpha, rssi_one_minus_alpha);
         pnet->combined_rssi_seen = 1;
     }
 
@@ -224,7 +182,8 @@ void bredr_piconet_add_packet(bredr_piconet_t *pnet,
     if ((rx_clk_1600 & 1u) == 0u)
     {
         pnet->master_rssi =
-            update_rssi_value(pnet->master_rssi, pnet->master_rssi_seen, meta->rssi_dbr);
+            update_rssi_value(pnet->master_rssi, pnet->master_rssi_seen, meta->rssi_dbr,
+                              rssi_window, rssi_alpha, rssi_one_minus_alpha);
         pnet->master_rssi_seen = 1;
     }
     else
@@ -233,7 +192,8 @@ void bredr_piconet_add_packet(bredr_piconet_t *pnet,
         bredr_decode_header_bits(frame, pnet->central_clk_1_6, bits);
         uint8_t lt = (bits[0]) | (uint8_t)(bits[1] << 1) | (uint8_t)(bits[2] << 2);
         pnet->slave_rssi[lt] =
-            update_rssi_value(pnet->slave_rssi[lt], pnet->slave_rssi_seen[lt], meta->rssi_dbr);
+            update_rssi_value(pnet->slave_rssi[lt], pnet->slave_rssi_seen[lt], meta->rssi_dbr,
+                              rssi_window, rssi_alpha, rssi_one_minus_alpha);
         pnet->slave_rssi_seen[lt] = 1;
     }
 }

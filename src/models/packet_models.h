@@ -8,7 +8,7 @@
 
 #include <stdint.h>
 
-#include "ble_codec.h"
+#include "ble_phy.h"
 #include "bredr_phy.h"
 #include "rx_metadata.h"
 

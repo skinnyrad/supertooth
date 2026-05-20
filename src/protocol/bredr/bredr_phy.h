@@ -361,25 +361,6 @@ int            bredr_get_frame(bredr_processor_t *proc, bredr_frame_t *out);
 uint8_t        bredr_compute_hec(uint16_t data, uint8_t uap);
 
 /**
- * @brief Apply 1/3-FEC majority vote and header unwhitening to a packet.
- *
- * Reconstructs the 18 whitened header bits from `pkt->header_raw` via
- * majority vote, then XORs with the PN-sequence for the given CLK1-6.
- * @brief Generate a 64-bit BR/EDR sync word from a 24-bit LAP.
- *
- * Implements the (64,30) linear block code used to encode the LAP into
- * the access code sync word (Bluetooth Core Spec Vol 2, Part B, §6.3.3).
- * The result is in "host order" (bit 0 = first transmitted), matching the
- * convention used by libbtbb's btbb_gen_syncword().
- *
- * Exposed publicly so that test/example code can construct synthetic frames.
- *
- * @param lap  24-bit Lower Address Part.
- * @return     64-bit sync word in host order.
- */
-uint64_t       bredr_gen_syncword(uint32_t lap);
-
-/**
  * @brief Return the maximum on-air payload bits for a given TYPE code.
  *
  * This is the number of bits the PHY targets when collecting a packet of

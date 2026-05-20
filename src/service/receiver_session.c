@@ -69,8 +69,8 @@ void receiver_bredr_session_init(receiver_session_t *session,
         memset(&session->bredr_callbacks, 0, sizeof(session->bredr_callbacks));
 
     receiver_bredr_update_layout(session);
-    bredr_piconet_set_rssi_averaging(config->rssi_averaging_window);
     bredr_piconet_store_init(&session->bredr_store);
+    bredr_piconet_store_set_rssi_averaging(&session->bredr_store, config->rssi_averaging_window);
 }
 
 receiver_session_t *receiver_session_create(void)
@@ -98,33 +98,33 @@ void receiver_session_request_stop(receiver_session_t *session)
         session->stop_requested = 1;
 }
 
-size_t receiver_session_bredr_piconet_count(const receiver_session_t *session)
+size_t receiver_session_bredr_piconet_count(receiver_session_t *session)
 {
     if (!session)
         return 0u;
 
-    pthread_mutex_lock((pthread_mutex_t *)&session->decoded_packet_mutex);
+    pthread_mutex_lock(&session->decoded_packet_mutex);
     size_t count = bredr_piconet_store_count(&session->bredr_store);
-    pthread_mutex_unlock((pthread_mutex_t *)&session->decoded_packet_mutex);
+    pthread_mutex_unlock(&session->decoded_packet_mutex);
     return count;
 }
 
-int receiver_session_bredr_piconet_snapshot(const receiver_session_t *session,
+int receiver_session_bredr_piconet_snapshot(receiver_session_t *session,
                                             size_t index,
                                             receiver_bredr_piconet_snapshot_t *out)
 {
     if (!session || !out)
         return -1;
 
-    pthread_mutex_lock((pthread_mutex_t *)&session->decoded_packet_mutex);
+    pthread_mutex_lock(&session->decoded_packet_mutex);
     const bredr_piconet_t *pnet = bredr_piconet_store_get(&session->bredr_store, index);
     if (!pnet)
     {
-        pthread_mutex_unlock((pthread_mutex_t *)&session->decoded_packet_mutex);
+        pthread_mutex_unlock(&session->decoded_packet_mutex);
         return -1;
     }
 
     receiver_fill_bredr_piconet_snapshot(pnet, out);
-    pthread_mutex_unlock((pthread_mutex_t *)&session->decoded_packet_mutex);
+    pthread_mutex_unlock(&session->decoded_packet_mutex);
     return 0;
 }

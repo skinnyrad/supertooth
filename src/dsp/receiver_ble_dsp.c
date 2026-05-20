@@ -31,11 +31,7 @@ int receiver_ble_rx_cb(hackrf_transfer *transfer)
     session->total_samples += num_complex;
 
     for (unsigned int i = 0; i < num_complex; i++)
-    {
-        float i_sample = samples[2u * i] / 128.0f;
-        float q_sample = samples[2u * i + 1u] / 128.0f;
-        session->raw[i] = i_sample + q_sample * _Complex_I;
-    }
+        session->raw[i] = hackrf_iq_to_complex(samples, i);
 
     unsigned int num_bits = num_complex / RECEIVER_BLE_SAMPLES_PER_SYMBOL;
     for (unsigned int s = 0; s < num_bits; s++)

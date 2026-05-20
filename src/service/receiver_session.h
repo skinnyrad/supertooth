@@ -123,8 +123,8 @@ int receiver_session_run_hybrid(receiver_session_t *session,
                                 const receiver_hybrid_callbacks_t *callbacks,
                                 receiver_hybrid_stats_t *stats_out);
 
-size_t receiver_session_bredr_piconet_count(const receiver_session_t *session);
-int receiver_session_bredr_piconet_snapshot(const receiver_session_t *session,
+size_t receiver_session_bredr_piconet_count(receiver_session_t *session);
+int receiver_session_bredr_piconet_snapshot(receiver_session_t *session,
                                             size_t index,
                                             receiver_bredr_piconet_snapshot_t *out);
 

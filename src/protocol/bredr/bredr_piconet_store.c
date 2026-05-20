@@ -9,6 +9,7 @@
 #include "bredr_recovery.h"
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
 /* ---------------------------------------------------------------------------
@@ -30,30 +31,6 @@ struct bredr_piconet_store_entry
     uint32_t last_clkn;
     int has_last_clkn;
 };
-
-/**
- * Returns 1 if clk6 + uap produce a header with matching HEC, 0 otherwise.
- */
-static int packet_hec_ok_for_clk6(const bredr_frame_t *frame,
-                                  uint8_t uap,
-                                  uint8_t clk6)
-{
-    if (!frame || !frame->has_header)
-        return 0;
-
-    uint8_t bits[18];
-    bredr_decode_header_bits(frame, (uint8_t)(clk6 & 0x3fu), bits);
-
-    uint16_t hdr_data = 0;
-    for (int i = 0; i < 10; i++)
-        hdr_data |= (uint16_t)(bits[i] << i);
-
-    uint8_t received_hec = 0;
-    for (int i = 0; i < 8; i++)
-        received_hec |= (uint8_t)(bits[10 + i] << (7 - i));
-
-    return bredr_compute_hec(hdr_data, uap) == received_hec;
-}
 
 /* ---------------------------------------------------------------------------
  * Store helpers
@@ -90,6 +67,8 @@ static bredr_piconet_store_entry_t *create_entry(bredr_piconet_store_t *store,
         return NULL;
 
     bredr_recovery_state_t *recovery = bredr_recovery_state_create(lap);
+    if (!recovery)
+        fprintf(stderr, "[bredr_piconet_store] OOM: UAP recovery disabled for LAP 0x%06x\n", lap);
 
     bredr_piconet_init(pnet, lap);
 
@@ -186,7 +165,7 @@ static int narrow_clk6_candidates(const bredr_piconet_t *pnet,
         {
             uint8_t c_at_hist =
                 (uint8_t)((candidates[k] - (int)delta_mod64 + 64) & 0x3F);
-            if (packet_hec_ok_for_clk6(hist_frame, uap, c_at_hist))
+            if (bredr_hec_ok_for_clk6(hist_frame, uap, c_at_hist))
                 candidates[j++] = candidates[k];
         }
         n = j;
@@ -227,7 +206,7 @@ static void try_uap_acquisition(bredr_piconet_store_entry_t *entry,
         int valid_n = 0;
         for (int c = 0; c < 64; c++)
         {
-            if (packet_hec_ok_for_clk6(frame, uap, (uint8_t)c))
+            if (bredr_hec_ok_for_clk6(frame, uap, (uint8_t)c))
                 valid_clk[valid_n++] = c;
         }
 
@@ -270,6 +249,25 @@ static void try_uap_acquisition(bredr_piconet_store_entry_t *entry,
  * Public API
  * ---------------------------------------------------------------------------*/
 
+void bredr_piconet_store_set_rssi_averaging(bredr_piconet_store_t *store,
+                                            unsigned int window)
+{
+    if (!store)
+        return;
+
+    store->rssi_avg_window = window;
+    if (window == 0u)
+    {
+        store->rssi_avg_alpha = 1.0f;
+        store->rssi_avg_one_minus_alpha = 0.0f;
+    }
+    else
+    {
+        store->rssi_avg_alpha = 2.0f / ((float)window + 1.0f);
+        store->rssi_avg_one_minus_alpha = 1.0f - store->rssi_avg_alpha;
+    }
+}
+
 void bredr_piconet_store_init(bredr_piconet_store_t *store)
 {
     if (!store)
@@ -281,6 +279,7 @@ void bredr_piconet_store_init(bredr_piconet_store_t *store)
         store->capacity, sizeof(*store->entries));
 
     bredr_recovery_global_init(BREDR_AC_ERRORS_DEFAULT);
+    bredr_piconet_store_set_rssi_averaging(store, 16u);
 }
 
 void bredr_piconet_store_free(bredr_piconet_store_t *store)
@@ -333,7 +332,10 @@ bredr_piconet_t *bredr_piconet_store_add_packet(bredr_piconet_store_t *store,
     entry->last_clkn = clkn;
     entry->has_last_clkn = 1;
 
-    bredr_piconet_add_packet(entry->pnet, event, rx_clk_1600);
+    bredr_piconet_add_packet(entry->pnet, event, rx_clk_1600,
+                             store->rssi_avg_window,
+                             store->rssi_avg_alpha,
+                             store->rssi_avg_one_minus_alpha);
     try_uap_acquisition(entry, event, clkn, rx_clk_1600, sample_rate_hz);
 
     return entry->pnet;

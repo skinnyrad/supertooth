@@ -20,4 +20,16 @@ void receiver_hybrid_process_ble(receiver_hybrid_ble_ctx_t *ble,
                                  receiver_bredr_block_t *blk);
 int receiver_hybrid_cb(hackrf_transfer *transfer);
 
+/**
+ * @brief Convert a HackRF interleaved int8_t IQ sample to normalised float complex.
+ *
+ * @param s  Interleaved I/Q byte buffer from hackrf_transfer.buffer.
+ * @param i  Sample index.
+ * @return   Complex sample with I and Q in [-1.0, 1.0).
+ */
+static inline float complex hackrf_iq_to_complex(const int8_t *s, unsigned int i)
+{
+    return s[2u * i] / 128.0f + (s[2u * i + 1u] / 128.0f) * _Complex_I;
+}
+
 #endif

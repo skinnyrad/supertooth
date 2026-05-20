@@ -256,6 +256,8 @@ void ble_print_packet_summary_line(unsigned long packet_no,
                                    const ble_packet_t *pkt,
                                    const rx_metadata_t *meta)
 {
+    if (!pkt)
+        return;
     const char *pdu_name = ble_pdu_type_name(pkt->pdu_type);
     const ble_address_t *addr = NULL;
     char addr_buf[18];

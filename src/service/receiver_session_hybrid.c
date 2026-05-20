@@ -129,21 +129,21 @@ int receiver_session_run_hybrid(receiver_session_t *session,
                                 const receiver_hybrid_callbacks_t *callbacks,
                                 receiver_hybrid_stats_t *stats_out)
 {
+    if (!session || !config)
+        return -1;
+
     receiver_bredr_config_t bredr_config = {
         .channel_count = RECEIVER_BREDR_MAX_CHANNELS,
         .bottom_channel = 0u,
         .rssi_averaging_window = RECEIVER_BREDR_DEFAULT_RSSI_AVERAGING_WINDOW,
         .lap_filter = 0u,
         .lap_filter_enabled = 0,
-        .debug = config ? config->debug : 0,
+        .debug = config->debug,
     };
     receiver_bredr_callbacks_t bredr_callbacks = {
         .on_packet = receiver_hybrid_bredr_bridge,
         .user = session,
     };
-
-    if (!session || !config)
-        return -1;
     session->hybrid_config = *config;
     session->hybrid_total_packets = 0;
     session->hybrid_dropped_blocks = 0;

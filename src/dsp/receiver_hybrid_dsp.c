@@ -139,7 +139,7 @@ int receiver_hybrid_cb(hackrf_transfer *transfer)
     session->bredr_samples_received += num_samples;
     int8_t *samples = (int8_t *)transfer->buffer;
     for (unsigned int i = 0; i < num_samples; i++)
-        blk->samples[i] = samples[2u * i] / 128.0f + (samples[2u * i + 1u] / 128.0f) * _Complex_I;
+        blk->samples[i] = hackrf_iq_to_complex(samples, i);
     session->bredr_pool_write_idx = ((unsigned int)block_idx + 1u) % RECEIVER_BREDR_BLOCK_POOL_SIZE;
     __atomic_thread_fence(__ATOMIC_RELEASE);
     receiver_dispatch_block_to_bredr_channels(session, (unsigned int)block_idx);

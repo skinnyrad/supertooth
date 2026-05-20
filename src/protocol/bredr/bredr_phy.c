@@ -20,32 +20,6 @@
 #define STATE_COLLECTING 2
 
 /* ---------------------------------------------------------------------------
- * Sync-word generator matrix
- *
- * (64,30) linear block code, polynomial 0260534236651, modified for the
- * barker code.  Row i is XOR'd into the codeword when bit (23-i) of the
- * LAP is set.  Source: libbtbb bluetooth_packet.c (reference only).
- * ---------------------------------------------------------------------------*/
-
-static const uint64_t sw_matrix[24] = {
-    0xfe000002a0d1c014ULL, 0x01000003f0b9201fULL,
-    0x008000033ae40edbULL, 0x004000035fca99b9ULL,
-    0x002000036d5dd208ULL, 0x00100001b6aee904ULL,
-    0x00080000db577482ULL, 0x000400006dabba41ULL,
-    0x00020002f46d43f4ULL, 0x000100017a36a1faULL,
-    0x00008000bd1b50fdULL, 0x000040029c3536aaULL,
-    0x000020014e1a9b55ULL, 0x0000100265b5d37eULL,
-    0x0000080132dae9bfULL, 0x000004025bd5ea0bULL,
-    0x00000203ef526bd1ULL, 0x000001033511ab3cULL,
-    0x000000819a88d59eULL, 0x00000040cd446acfULL,
-    0x00000022a41aabb3ULL, 0x0000001390b5cb0dULL,
-    0x0000000b0ae27b52ULL, 0x0000000585713da9ULL};
-
-/* Default codeword (output when LAP == 0), already incorporating the PN
- * sequence and barker code modification. */
-static const uint64_t SW_DEFAULT_CW = 0xb0000002c7820e7eULL;
-
-/* ---------------------------------------------------------------------------
  * Barker code constants
  *
  * Bits 57–63 of any valid BR/EDR sync word form a 7-bit "barker code".
@@ -189,15 +163,6 @@ static uint8_t read_symbol_bit(const bredr_processor_t *proc,
  * Public API implementation
  * ---------------------------------------------------------------------------*/
 
-uint64_t bredr_gen_syncword(uint32_t lap)
-{
-    uint64_t codeword = SW_DEFAULT_CW;
-    for (int i = 0; i < 24; i++)
-        if (lap & (0x800000u >> i))
-            codeword ^= sw_matrix[i];
-    return codeword;
-}
-
 void bredr_processor_init(bredr_processor_t *proc, uint8_t max_ac_errors)
 {
     if (!proc)
@@ -254,6 +219,7 @@ bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit)
          * phase entirely and report immediately. */
         if (lap == BREDR_LAP_GIAC || lap == BREDR_LAP_LIAC)
         {
+            memset(&proc->last_frame, 0, sizeof(proc->last_frame));
             proc->last_frame.lap = lap;
             proc->last_frame.ac_errors = ac_errors;
             proc->last_frame.has_header = 0u;
@@ -298,6 +264,7 @@ bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit)
         if (trailer_nibble != expected_trailer)
         {
             /* Invalid trailer: shortened access code, no header or payload. */
+            memset(&proc->last_frame, 0, sizeof(proc->last_frame));
             proc->last_frame.lap = proc->detected_lap;
             proc->last_frame.ac_errors = proc->detected_ac_errors;
             proc->last_frame.has_header = 0u;
@@ -369,9 +336,13 @@ bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit)
      * ====================================================================== */
     bredr_frame_t *frame = &proc->last_frame;
 
+    /* header_raw was stored in frame earlier; save it across the memset. */
+    uint64_t saved_header_raw = frame->header_raw;
+    memset(frame, 0, sizeof(*frame));
     frame->lap = proc->detected_lap;
     frame->ac_errors = proc->detected_ac_errors;
     frame->has_header = 1u;
+    frame->header_raw = saved_header_raw;
     frame->payload_bits = (proc->bits_collected > 54u) ? (proc->bits_collected - 54u) : 0u;
 
     /* Extract payload bytes from raw_symbols starting at bit 54.
@@ -394,6 +365,7 @@ int bredr_get_frame(bredr_processor_t *proc, bredr_frame_t *out)
         return -1;
 
     memcpy(out, &proc->last_frame, sizeof(*out));
+    memset(&proc->last_frame, 0, sizeof(proc->last_frame));
     proc->packet_ready = 0;
     return 0;
 }

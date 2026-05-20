@@ -32,6 +32,23 @@ static uint8_t read_packed_bit(const uint8_t *data, unsigned int bit_pos)
     return (uint8_t)((data[byte_idx] >> bit_idx) & 1u);
 }
 
+/**
+ * @brief Apply 1/3-rate FEC majority-vote decode to 18 tripled bits.
+ *
+ * Extracts each logical bit from its three copies in `header_raw` using
+ * majority vote and writes the result into `bits[0..17]`.
+ */
+static void bredr_fec_majority_vote(uint64_t header_raw, uint8_t bits[18])
+{
+    for (int i = 0; i < 18; i++)
+    {
+        uint8_t a = (uint8_t)((header_raw >> (3 * i + 0)) & 1u);
+        uint8_t b = (uint8_t)((header_raw >> (3 * i + 1)) & 1u);
+        uint8_t c = (uint8_t)((header_raw >> (3 * i + 2)) & 1u);
+        bits[i] = (uint8_t)((a & b) | (b & c) | (c & a));
+    }
+}
+
 uint8_t bredr_reverse_byte(uint8_t b)
 {
     b = (uint8_t)(((b & 0xF0u) >> 4) | ((b & 0x0Fu) << 4));
@@ -63,13 +80,7 @@ void bredr_decode_fec_header_raw(uint64_t header_raw,
                                  uint8_t *hec)
 {
     uint8_t hdr[18];
-    for (int i = 0; i < 18; i++)
-    {
-        uint8_t a = (uint8_t)((header_raw >> (3 * i + 0)) & 1u);
-        uint8_t b = (uint8_t)((header_raw >> (3 * i + 1)) & 1u);
-        uint8_t c = (uint8_t)((header_raw >> (3 * i + 2)) & 1u);
-        hdr[i] = (uint8_t)((a & b) | (b & c) | (c & a));
-    }
+    bredr_fec_majority_vote(header_raw, hdr);
 
     if (lt_addr)
         *lt_addr = (uint8_t)(hdr[0] | (hdr[1] << 1) | (hdr[2] << 2));
@@ -88,13 +99,7 @@ void bredr_decode_fec_header_raw(uint64_t header_raw,
 
 void bredr_decode_header_bits(const bredr_frame_t *frame, uint8_t clk6, uint8_t bits[18])
 {
-    for (int i = 0; i < 18; i++)
-    {
-        uint8_t a = (uint8_t)((frame->header_raw >> (3*i + 0)) & 1u);
-        uint8_t b = (uint8_t)((frame->header_raw >> (3*i + 1)) & 1u);
-        uint8_t c = (uint8_t)((frame->header_raw >> (3*i + 2)) & 1u);
-        bits[i] = (a & b) | (b & c) | (c & a);
-    }
+    bredr_fec_majority_vote(frame->header_raw, bits);
 
     int index = (int)s_whitening_indices[clk6 & 0x3fu];
     for (int i = 0; i < 18; i++)
@@ -133,4 +138,62 @@ unsigned int bredr_extract_payload_bytes(const uint8_t *raw_symbols,
     }
 
     return payload_bytes;
+}
+
+/* ---------------------------------------------------------------------------
+ * Sync-word generation
+ *
+ * (64,30) linear block code, polynomial 0260534236651, modified for the
+ * barker code.  Row i is XOR'd into the codeword when bit (23-i) of the
+ * LAP is set.  Source: libbtbb bluetooth_packet.c (reference only).
+ * ---------------------------------------------------------------------------*/
+
+static const uint64_t s_sw_matrix[24] = {
+    0xfe000002a0d1c014ULL, 0x01000003f0b9201fULL,
+    0x008000033ae40edbULL, 0x004000035fca99b9ULL,
+    0x002000036d5dd208ULL, 0x00100001b6aee904ULL,
+    0x00080000db577482ULL, 0x000400006dabba41ULL,
+    0x00020002f46d43f4ULL, 0x000100017a36a1faULL,
+    0x00008000bd1b50fdULL, 0x000040029c3536aaULL,
+    0x000020014e1a9b55ULL, 0x0000100265b5d37eULL,
+    0x0000080132dae9bfULL, 0x000004025bd5ea0bULL,
+    0x00000203ef526bd1ULL, 0x000001033511ab3cULL,
+    0x000000819a88d59eULL, 0x00000040cd446acfULL,
+    0x00000022a41aabb3ULL, 0x0000001390b5cb0dULL,
+    0x0000000b0ae27b52ULL, 0x0000000585713da9ULL};
+
+/* Default codeword (output when LAP == 0), already incorporating the PN
+ * sequence and barker code modification. */
+static const uint64_t SW_DEFAULT_CW = 0xb0000002c7820e7eULL;
+
+uint64_t bredr_gen_syncword(uint32_t lap)
+{
+    uint64_t codeword = SW_DEFAULT_CW;
+    for (int i = 0; i < 24; i++)
+        if (lap & (0x800000u >> i))
+            codeword ^= s_sw_matrix[i];
+    return codeword;
+}
+
+/* ---------------------------------------------------------------------------
+ * HEC verification
+ * ---------------------------------------------------------------------------*/
+
+int bredr_hec_ok_for_clk6(const bredr_frame_t *frame, uint8_t uap, uint8_t clk6)
+{
+    if (!frame || !frame->has_header)
+        return 0;
+
+    uint8_t bits[18];
+    bredr_decode_header_bits(frame, (uint8_t)(clk6 & 0x3fu), bits);
+
+    uint16_t hdr_data = 0;
+    for (int i = 0; i < 10; i++)
+        hdr_data |= (uint16_t)(bits[i] << i);
+
+    uint8_t received_hec = 0;
+    for (int i = 0; i < 8; i++)
+        received_hec |= (uint8_t)(bits[10 + i] << (7 - i));
+
+    return bredr_compute_hec(hdr_data, uap) == received_hec;
 }
