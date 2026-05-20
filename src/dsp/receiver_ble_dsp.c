@@ -63,8 +63,8 @@ int receiver_ble_rx_cb(hackrf_transfer *transfer)
                 i_end = num_complex;
         }
 
-        ble_packet_t pkt;
-        if (ble_get_packet(&session->ble_proc, &pkt) != 0)
+        ble_frame_t frame;
+        if (ble_get_frame(&session->ble_proc, &frame) != 0)
             continue;
 
         session->packet_count++;
@@ -81,12 +81,11 @@ int receiver_ble_rx_cb(hackrf_transfer *transfer)
                                        (uint16_t)session->ble_config.ble_channel,
                                        rssi_dbr,
                                        255u);
-            decoded_packet_t decoded = {
-                .protocol = PROTO_BLE,
+            ble_event_t event = {
                 .meta = meta,
+                .frame = frame,
             };
-            decoded.u.ble = pkt;
-            session->ble_callbacks.on_packet(&decoded, session->ble_callbacks.user);
+            session->ble_callbacks.on_packet(&event, session->ble_callbacks.user);
         }
     }
 

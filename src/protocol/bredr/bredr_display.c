@@ -3,7 +3,7 @@
 #include <inttypes.h>
 #include <stdio.h>
 
-#include "bredr_header_codec.h"
+#include "bredr_codec.h"
 
 typedef struct
 {
@@ -40,10 +40,10 @@ static int bredr_piconet_has_active_track(const bredr_piconet_snapshot_t *pnet)
 }
 
 static void bredr_format_piconet_id(char out[16],
-                                    const bredr_packet_t *pkt,
+                                    const bredr_frame_t *frame,
                                     const bredr_piconet_snapshot_t *pnet)
 {
-    uint32_t lap = pkt ? (pkt->lap & 0xFFFFFFu) : 0u;
+    uint32_t lap = frame ? (frame->lap & 0xFFFFFFu) : 0u;
     if (pnet)
         lap = pnet->lap & 0xFFFFFFu;
 
@@ -61,16 +61,16 @@ static void bredr_format_rssi_value(char out[8], int seen, float value)
         snprintf(out, 8, "  --.-");
 }
 
-static int bredr_decode_header_with_clock(const bredr_packet_t *pkt,
+static int bredr_decode_header_with_clock(const bredr_frame_t *frame,
                                           uint8_t uap,
                                           uint8_t clk6,
                                           bredr_display_decoded_header_t *out)
 {
-    if (!pkt || !pkt->has_header || !out)
+    if (!frame || !frame->has_header || !out)
         return 0;
 
     uint8_t bits[18];
-    bredr_decode_header_bits(pkt, (uint8_t)(clk6 & 0x3Fu), bits);
+    bredr_decode_header_bits(frame, (uint8_t)(clk6 & 0x3Fu), bits);
 
     out->lt_addr = (bits[0]) | (uint8_t)(bits[1] << 1) | (uint8_t)(bits[2] << 2);
     out->type = (bits[3]) | (uint8_t)(bits[4] << 1) | (uint8_t)(bits[5] << 2)
@@ -92,45 +92,46 @@ static int bredr_decode_header_with_clock(const bredr_packet_t *pkt,
     return out->hec_ok;
 }
 
-static void bredr_print_payload_preview(const bredr_packet_t *pkt)
+static void bredr_print_payload_preview(const bredr_frame_t *frame)
 {
-    if (!pkt || pkt->payload_bytes == 0u)
+    unsigned int payload_bytes = bredr_frame_payload_bytes(frame);
+    if (!frame || payload_bytes == 0u)
     {
         printf("Payload      : (none)\n");
         return;
     }
 
-    unsigned int show = pkt->payload_bytes < 32u ? pkt->payload_bytes : 32u;
-    printf("Payload      : %u bytes", pkt->payload_bytes);
+    unsigned int show = payload_bytes < 32u ? payload_bytes : 32u;
+    printf("Payload      : %u bits (%u bytes)", frame->payload_bits, payload_bytes);
     for (unsigned int i = 0; i < show; i++)
     {
         if (i % 16u == 0u)
             printf("\n               ");
-        printf("%02X ", pkt->payload[i]);
+        printf("%02X ", frame->payload[i]);
     }
-    if (pkt->payload_bytes > show)
+    if (payload_bytes > show)
         printf("...");
     printf("\n");
 }
 
-void bredr_print_packet_details(const bredr_packet_t *pkt,
+void bredr_print_packet_details(const bredr_frame_t *frame,
                                 const bredr_piconet_snapshot_t *pnet)
 {
     printf("\n[%s Packet Info]\n",
-           pkt->has_header ? "BR/EDR Data" : "BR/EDR Inquiry");
-    printf("LAP          : 0x%06" PRIX32 "\n", pkt->lap & 0xFFFFFFu);
-    if (pkt->has_header)
+           frame->has_header ? "BR/EDR Data" : "BR/EDR Inquiry");
+    printf("LAP          : 0x%06" PRIX32 "\n", frame->lap & 0xFFFFFFu);
+    if (frame->has_header)
         printf("HEADER       : 0x%014" PRIX64 "\n",
-               pkt->header_raw & 0x003FFFFFFFFFFFFFull);
+               frame->header_raw & 0x003FFFFFFFFFFFFFull);
     else
         printf("HEADER       : (none — shortened access code)\n");
 
-    if (pkt->has_header)
+    if (frame->has_header)
     {
         bredr_display_decoded_header_t decoded = {0};
         int decoded_ok = 0;
         if (pnet && pnet->clk_known && pnet->uap_found)
-            decoded_ok = bredr_decode_header_with_clock(pkt, pnet->uap,
+            decoded_ok = bredr_decode_header_with_clock(frame, pnet->uap,
                                                         pnet->central_clk_1_6, &decoded);
 
         if (decoded_ok)
@@ -145,10 +146,10 @@ void bredr_print_packet_details(const bredr_packet_t *pkt,
             printf("SEQN         : %u\n", decoded.seqn & 1u);
         }
 
-        bredr_print_payload_preview(pkt);
+        bredr_print_payload_preview(frame);
     }
 
-    if (pkt->has_header && pnet)
+    if (frame->has_header && pnet)
     {
         printf("\n[Piconet Info]\n");
         printf("Packets      : %lu\n", pnet->total_packets);
@@ -166,11 +167,11 @@ void bredr_print_packet_details(const bredr_packet_t *pkt,
 }
 
 void bredr_print_packet_summary_line(unsigned long packet_no,
-                                     const bredr_packet_t *pkt,
+                                     const bredr_frame_t *frame,
                                      const bredr_piconet_snapshot_t *pnet,
                                      const rx_metadata_t *meta)
 {
-    if (pkt->has_header)
+    if (frame->has_header)
     {
         char uap_buf[8];
         char clk_buf[8];
@@ -185,10 +186,10 @@ void bredr_print_packet_summary_line(unsigned long packet_no,
 
         printf("pkt=%-6lu lap=%06" PRIX32 " uap=%s ch=%02u ac=%u clk=%s track=%d rssi=%.1f\n",
                packet_no,
-               pkt->lap & 0xFFFFFFu,
+               frame->lap & 0xFFFFFFu,
                uap_buf,
                meta->channel_index,
-               pkt->ac_errors,
+               frame->ac_errors,
                clk_buf,
                pnet ? pnet->tracking_state : -1,
                meta->rssi_dbr);
@@ -197,9 +198,9 @@ void bredr_print_packet_summary_line(unsigned long packet_no,
     {
         printf("pkt=%-6lu lap=%06" PRIX32 " uap=?? ch=%02u ac=%u clk=?? track=%d rssi=%.1f\n",
                packet_no,
-               pkt->lap & 0xFFFFFFu,
+               frame->lap & 0xFFFFFFu,
                meta->channel_index,
-               pkt->ac_errors,
+               frame->ac_errors,
                pnet ? pnet->tracking_state : -1,
                meta->rssi_dbr);
     }
@@ -225,7 +226,7 @@ void bredr_print_piconet_snapshot(const bredr_piconet_snapshot_t *pnet)
 }
 
 void bredr_print_rssi_snapshot(unsigned long packet_no,
-                               const bredr_packet_t *pkt,
+                               const bredr_frame_t *frame,
                                const rx_metadata_t *meta,
                                const bredr_piconet_snapshot_t *const *piconets,
                                size_t count,
@@ -241,7 +242,7 @@ void bredr_print_rssi_snapshot(unsigned long packet_no,
     {
         const bredr_piconet_snapshot_t *cur = piconets[i];
         char piconet_id[16];
-        bredr_format_piconet_id(piconet_id, pkt, cur);
+        bredr_format_piconet_id(piconet_id, frame, cur);
 
         if (!bredr_piconet_has_active_track(cur))
         {

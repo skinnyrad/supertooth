@@ -25,8 +25,6 @@
 
 #define RECEIVER_HYBRID_DECIMATION 10u
 #define RECEIVER_HYBRID_BLE_FREQ_OFFSET_HZ (-9500000.0f)
-#define RECEIVER_RX_CLK1600_TICKS_PER_SECOND 1600u
-#define RECEIVER_CLKN_TICKS_PER_SECOND 3200u
 #define RECEIVER_SOURCE_ID_DEFAULT 0u
 
 typedef struct
@@ -129,10 +127,6 @@ struct receiver_session
     unsigned long hybrid_dropped_blocks;
 };
 
-uint32_t receiver_bredr_sample_to_rx_clk_1600(const receiver_session_t *session,
-                                              unsigned long long raw_sample_index);
-uint32_t receiver_bredr_sample_to_clkn(const receiver_session_t *session,
-                                       unsigned long long raw_sample_index);
 rx_metadata_t receiver_make_metadata(uint64_t start_sample,
                                      uint32_t center_frequency_hz,
                                      uint16_t channel_index,

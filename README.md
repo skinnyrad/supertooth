@@ -119,8 +119,19 @@ src/
 - `src/service/`: reusable library boundary built around `receiver_session`.
 - `src/dsp/`: mode-specific DSP implementations extracted from session orchestration.
 - `src/radio/`: HackRF lifecycle and configuration wrapper.
-- `src/models/`: `decoded_packet_t` and `rx_metadata_t`.
+- `src/models/`: shared receive-event wrappers such as `ble_event_t`, `bredr_event_t`, and `rx_metadata_t`.
 - `src/protocol/ble/`: BLE framing and decode support.
 - `src/protocol/bredr/`: BR/EDR framing, measurement, tracking, and recovery support.
+
+### Frame And Packet Split
+
+The protocol pipeline now separates captured frames from decoded packets:
+
+- BLE PHY/framing produces `ble_frame_t`.
+- BLE codec owns the clean decoded `ble_packet_t` model and `ble_decode_frame()`.
+- Service callbacks carry `ble_event_t`, which pairs `rx_metadata_t` with a captured `ble_frame_t`.
+- BR/EDR follows the same high-level shape with `bredr_event_t` carrying `bredr_frame_t`.
+
+This keeps capture-stage data in the PHY layer, decoded semantic packet fields in the codec layer, and display formatting in the BLE display layer.
 
 For a broader description of the current architecture, see `docs/architecture.md`.

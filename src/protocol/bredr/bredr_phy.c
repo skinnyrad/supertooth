@@ -6,7 +6,7 @@
  */
 
 #include "bredr_phy.h"
-#include "bredr_header_codec.h"
+#include "bredr_codec.h"
 
 #include <string.h>   /* memset, memcpy */
 #include <stddef.h>   /* NULL */
@@ -254,10 +254,10 @@ bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit)
          * phase entirely and report immediately. */
         if (lap == BREDR_LAP_GIAC || lap == BREDR_LAP_LIAC)
         {
-            proc->last_packet.lap        = lap;
-            proc->last_packet.ac_errors  = ac_errors;
-            proc->last_packet.has_header = 0u;
-            proc->last_packet.payload_bytes = 0u;
+            proc->last_frame.lap = lap;
+            proc->last_frame.ac_errors = ac_errors;
+            proc->last_frame.has_header = 0u;
+            proc->last_frame.payload_bits = 0u;
             proc->packet_ready = 1;
             return BREDR_VALID_PACKET;
         }
@@ -298,10 +298,10 @@ bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit)
         if (trailer_nibble != expected_trailer)
         {
             /* Invalid trailer: shortened access code, no header or payload. */
-            proc->last_packet.lap = proc->detected_lap;
-            proc->last_packet.ac_errors = proc->detected_ac_errors;
-            proc->last_packet.has_header = 0u;
-            proc->last_packet.payload_bytes = 0u;
+            proc->last_frame.lap = proc->detected_lap;
+            proc->last_frame.ac_errors = proc->detected_ac_errors;
+            proc->last_frame.has_header = 0u;
+            proc->last_frame.payload_bits = 0u;
             proc->packet_ready = 1;
             reset_collection(proc);
             return BREDR_VALID_PACKET;
@@ -339,18 +339,9 @@ bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit)
             if (read_symbol_bit(proc, i))
                 header_raw |= (uint64_t)1u << i;
 
-        uint8_t lt_addr, type, flow, arqn, seqn, hec;
-        bredr_decode_fec_header_raw(header_raw, &lt_addr, &type, &flow, &arqn, &seqn, &hec);
-        proc->last_packet.header_raw = header_raw;
-
-        /* Store decoded header fields directly into the staging packet so we
-         * don't need to decode again at completion time. */
-        proc->last_packet.lt_addr = lt_addr;
-        proc->last_packet.type = type;
-        proc->last_packet.flow = flow;
-        proc->last_packet.arqn = arqn;
-        proc->last_packet.seqn = seqn;
-        proc->last_packet.hec = hec;
+        uint8_t type = 0u;
+        bredr_decode_fec_header_raw(header_raw, NULL, &type, NULL, NULL, NULL, NULL);
+        proc->last_frame.header_raw = header_raw;
 
         unsigned int payload_bits = bredr_on_air_payload_bits(type);
         proc->bits_to_collect = 54u + payload_bits;
@@ -374,44 +365,21 @@ bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit)
         return BREDR_COLLECTING;
 
     /* ======================================================================
-     * Packet complete — assemble bredr_packet_t and signal the caller.
+     * Frame complete — assemble bredr_frame_t and signal the caller.
      * ====================================================================== */
-    bredr_packet_t *pkt = &proc->last_packet;
+    bredr_frame_t *frame = &proc->last_frame;
 
-    /* AC fields (header fields already stored during decode). */
-    pkt->lap = proc->detected_lap;
-    pkt->ac_errors = proc->detected_ac_errors;
-    pkt->has_header = 1u;
-
-    /* HEC verification — only possible for inquiry packets where the UAP
-     * is the well-known DCI value (0x00).  Pack the 10 header bits into
-     * a uint16_t with bit 0 = LT_ADDR[0] (first transmitted). */
-    uint32_t lap = proc->detected_lap & 0xFFFFFFu;
-    if (lap == BREDR_LAP_GIAC || lap == BREDR_LAP_LIAC)
-    {
-        uint16_t hdr_data =
-            (uint16_t)((pkt->lt_addr & 0x7u) |
-                       ((pkt->type & 0xFu) << 3u) |
-                       ((pkt->flow & 0x1u) << 7u) |
-                       ((pkt->arqn & 0x1u) << 8u) |
-                       ((pkt->seqn & 0x1u) << 9u));
-        /* compute_hec returns the LFSR register (bit 7 = first transmitted).
-         * Our decoded pkt->hec has bit 0 = first received, so it is the
-         * bit-reversal of the LFSR register output. */
-        uint8_t expected_hec = bredr_compute_hec(hdr_data, BREDR_DCI);
-        pkt->hec_valid = (expected_hec == bredr_reverse_byte(pkt->hec)) ? 1u : 2u;
-    }
-    else
-    {
-        pkt->hec_valid = 0u; /* UAP unknown — cannot verify */
-    }
+    frame->lap = proc->detected_lap;
+    frame->ac_errors = proc->detected_ac_errors;
+    frame->has_header = 1u;
+    frame->payload_bits = (proc->bits_collected > 54u) ? (proc->bits_collected - 54u) : 0u;
 
     /* Extract payload bytes from raw_symbols starting at bit 54.
      * Bits are packed LSB-first; read them out byte by byte. */
-    pkt->payload_bytes = bredr_extract_payload_bytes(proc->raw_symbols,
-                                                     proc->bits_collected,
-                                                     pkt->payload,
-                                                     BREDR_MAX_PAYLOAD_BYTES);
+    bredr_extract_payload_bytes(proc->raw_symbols,
+                                proc->bits_collected,
+                                frame->payload,
+                                BREDR_MAX_PAYLOAD_BYTES);
 
     proc->packet_ready = 1;
 
@@ -420,12 +388,12 @@ bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit)
     return BREDR_VALID_PACKET;
 }
 
-int bredr_get_packet(bredr_processor_t *proc, bredr_packet_t *out)
+int bredr_get_frame(bredr_processor_t *proc, bredr_frame_t *out)
 {
     if (!proc || !out || !proc->packet_ready)
         return -1;
 
-    memcpy(out, &proc->last_packet, sizeof(*out));
+    memcpy(out, &proc->last_frame, sizeof(*out));
     proc->packet_ready = 0;
     return 0;
 }

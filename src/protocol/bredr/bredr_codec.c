@@ -1,9 +1,9 @@
 /**
- * @file bredr_header_codec.c
+ * @file bredr_codec.c
  * @brief BR/EDR codec helpers extracted from the PHY state machine.
  */
 
-#include "bredr_header_codec.h"
+#include "bredr_codec.h"
 
 static const unsigned int s_payload_bits[16] = {
     0, 0, 240, 480, 216, 240, 240, 240,
@@ -86,13 +86,13 @@ void bredr_decode_fec_header_raw(uint64_t header_raw,
                          (hdr[14] << 4) | (hdr[15] << 5) | (hdr[16] << 6) | (hdr[17] << 7));
 }
 
-void bredr_decode_header_bits(const bredr_packet_t *pkt, uint8_t clk6, uint8_t bits[18])
+void bredr_decode_header_bits(const bredr_frame_t *frame, uint8_t clk6, uint8_t bits[18])
 {
     for (int i = 0; i < 18; i++)
     {
-        uint8_t a = (uint8_t)((pkt->header_raw >> (3*i + 0)) & 1u);
-        uint8_t b = (uint8_t)((pkt->header_raw >> (3*i + 1)) & 1u);
-        uint8_t c = (uint8_t)((pkt->header_raw >> (3*i + 2)) & 1u);
+        uint8_t a = (uint8_t)((frame->header_raw >> (3*i + 0)) & 1u);
+        uint8_t b = (uint8_t)((frame->header_raw >> (3*i + 1)) & 1u);
+        uint8_t c = (uint8_t)((frame->header_raw >> (3*i + 2)) & 1u);
         bits[i] = (a & b) | (b & c) | (c & a);
     }
 
@@ -115,7 +115,7 @@ unsigned int bredr_extract_payload_bytes(const uint8_t *raw_symbols,
                                          unsigned int payload_capacity)
 {
     unsigned int payload_bits = (bits_collected > 54u) ? (bits_collected - 54u) : 0u;
-    unsigned int payload_bytes = payload_bits / 8u;
+    unsigned int payload_bytes = (payload_bits + 7u) / 8u;
     if (payload_bytes > payload_capacity)
         payload_bytes = payload_capacity;
 
@@ -125,6 +125,8 @@ unsigned int bredr_extract_payload_bytes(const uint8_t *raw_symbols,
         for (unsigned int bit_idx = 0u; bit_idx < 8u; bit_idx++)
         {
             unsigned int pos = 54u + i * 8u + bit_idx;
+            if ((i * 8u + bit_idx) >= payload_bits)
+                break;
             byte |= (uint8_t)(read_packed_bit(raw_symbols, pos) << bit_idx);
         }
         payload_out[i] = byte;

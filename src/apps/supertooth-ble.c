@@ -61,10 +61,10 @@ static void print_usage(const char *argv0)
 }
 
 static void print_ble_packet_full(unsigned long packet_no,
-                                  const decoded_packet_t *packet)
+                                  const ble_event_t *event)
 {
-    const ble_packet_t *pkt = &packet->u.ble;
-    const rx_metadata_t *meta = &packet->meta;
+    const rx_metadata_t *meta = &event->meta;
+    ble_packet_t packet;
     printf("\n------------------ Packet #%lu --------------------\n", packet_no);
     printf("[RX Info]\n");
     printf("Sample Index : %" PRIu64 " (%u Msps master clock)\n",
@@ -74,26 +74,43 @@ static void print_ble_packet_full(unsigned long packet_no,
            (unsigned int)(meta->center_frequency_hz / 1000000u), meta->channel_index);
     printf("RSSI         : %.2f dBr\n", meta->rssi_dbr);
     printf("\n");
-    ble_print_packet(pkt);
+    if (ble_decode_frame(&event->frame, meta->channel_index, &packet) == 0)
+        ble_print_packet(&packet);
+    else
+        printf("[BLE Decode Error]\n");
     printf("--------------------------------------------------\n");
 }
 
 static void print_ble_packet_summary(unsigned long packet_no,
-                                     const decoded_packet_t *packet)
+                                     const ble_event_t *event)
 {
-    ble_print_packet_summary_line(packet_no, &packet->u.ble, &packet->meta);
+    ble_packet_t packet;
+    if (ble_decode_frame(&event->frame, event->meta.channel_index, &packet) == 0)
+    {
+        ble_print_packet_summary_line(packet_no, &packet, &event->meta);
+        return;
+    }
+
+    printf("pkt=%-6lu type=BLE pdu=%-14s ch=%02u addr=%s len=%-3u crc=%s rssi=%.1f\n",
+           packet_no,
+           "DECODE_FAIL",
+           event->meta.channel_index,
+           "--",
+           0u,
+           "FAIL",
+           event->meta.rssi_dbr);
 }
 
-static void handle_ble_packet(const decoded_packet_t *packet,
-                             void *user)
+static void handle_ble_packet(const ble_event_t *event,
+                              void *user)
 {
     (void)user;
     app_output_lock();
     unsigned long packet_no = ++g_packet_count;
     if (g_output_mode == APP_OUTPUT_MODE_SUMMARY)
-        print_ble_packet_summary(packet_no, packet);
+        print_ble_packet_summary(packet_no, event);
     else
-        print_ble_packet_full(packet_no, packet);
+        print_ble_packet_full(packet_no, event);
     fflush(stdout);
     app_output_unlock();
 }

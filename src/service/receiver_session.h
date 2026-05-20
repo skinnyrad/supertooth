@@ -71,7 +71,7 @@ typedef struct
 
 typedef bredr_piconet_snapshot_t receiver_bredr_piconet_snapshot_t;
 
-typedef void (*receiver_ble_packet_fn)(const decoded_packet_t *packet,
+typedef void (*receiver_ble_packet_fn)(const ble_event_t *event,
                                        void *user);
 
 typedef struct
@@ -80,7 +80,7 @@ typedef struct
     void *user;
 } receiver_ble_callbacks_t;
 
-typedef void (*receiver_bredr_packet_fn)(const decoded_packet_t *packet,
+typedef void (*receiver_bredr_packet_fn)(const bredr_event_t *event,
                                          const receiver_bredr_piconet_snapshot_t *piconet,
                                          void *user);
 
@@ -90,11 +90,11 @@ typedef struct
     void *user;
 } receiver_bredr_callbacks_t;
 
-typedef void (*receiver_hybrid_bredr_packet_fn)(const decoded_packet_t *packet,
+typedef void (*receiver_hybrid_bredr_packet_fn)(const bredr_event_t *event,
                                                 const receiver_bredr_piconet_snapshot_t *piconet,
                                                 void *user);
 
-typedef void (*receiver_hybrid_ble_packet_fn)(const decoded_packet_t *packet,
+typedef void (*receiver_hybrid_ble_packet_fn)(const ble_event_t *event,
                                               void *user);
 
 typedef struct

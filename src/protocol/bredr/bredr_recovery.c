@@ -59,7 +59,7 @@ void bredr_recovery_state_reset(bredr_recovery_state_t *state, uint32_t lap)
 }
 
 int bredr_recovery_process_packet(bredr_recovery_state_t *state,
-                                  const bredr_packet_t *pkt,
+                                  const bredr_frame_t *frame,
                                   int channel,
                                   uint32_t clkn,
                                   bredr_recovery_result_t *out)
@@ -69,5 +69,5 @@ int bredr_recovery_process_packet(bredr_recovery_state_t *state,
     if (!state->ops || !state->ops->process_packet)
         return 0;
 
-    return state->ops->process_packet(state->backend_state, pkt, channel, clkn, out);
+    return state->ops->process_packet(state->backend_state, frame, channel, clkn, out);
 }

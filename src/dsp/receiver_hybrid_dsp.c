@@ -82,8 +82,8 @@ void receiver_hybrid_process_ble(receiver_hybrid_ble_ctx_t *ble,
             if (rssi_end > decimated_samples)
                 rssi_end = decimated_samples;
         }
-        ble_packet_t pkt;
-        if (ble_get_packet(&ble->ble_proc, &pkt) != 0)
+        ble_frame_t frame;
+        if (ble_get_frame(&ble->ble_proc, &frame) != 0)
             continue;
         float rssi_dbr =
             receiver_rssi_from_mean_power_range(ble->decimated, rssi_start, rssi_end,
@@ -94,11 +94,10 @@ void receiver_hybrid_process_ble(receiver_hybrid_ble_ctx_t *ble,
                                                     BLE_CH37_INDEX,
                                                     rssi_dbr,
                                                     255u);
-        decoded_packet_t decoded = {
-            .protocol = PROTO_BLE,
+        ble_event_t event = {
             .meta = meta,
+            .frame = frame,
         };
-        decoded.u.ble = pkt;
 
         receiver_hybrid_callbacks_t callbacks;
         pthread_mutex_lock(&session->decoded_packet_mutex);
@@ -107,7 +106,7 @@ void receiver_hybrid_process_ble(receiver_hybrid_ble_ctx_t *ble,
         pthread_mutex_unlock(&session->decoded_packet_mutex);
 
         if (callbacks.on_ble_packet)
-            callbacks.on_ble_packet(&decoded, callbacks.user);
+            callbacks.on_ble_packet(&event, callbacks.user);
     }
 }
 

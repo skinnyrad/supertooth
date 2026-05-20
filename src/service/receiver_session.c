@@ -4,24 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-uint32_t receiver_bredr_sample_to_rx_clk_1600(const receiver_session_t *session,
-                                              unsigned long long raw_sample_index)
-{
-    unsigned long long num =
-        raw_sample_index * (unsigned long long)RECEIVER_RX_CLK1600_TICKS_PER_SECOND +
-        (unsigned long long)(session->bredr_sample_rate / 2u);
-    return (uint32_t)(num / (unsigned long long)session->bredr_sample_rate);
-}
-
-uint32_t receiver_bredr_sample_to_clkn(const receiver_session_t *session,
-                                       unsigned long long raw_sample_index)
-{
-    unsigned long long num =
-        raw_sample_index * (unsigned long long)RECEIVER_CLKN_TICKS_PER_SECOND +
-        (unsigned long long)(session->bredr_sample_rate / 2u);
-    return (uint32_t)(num / (unsigned long long)session->bredr_sample_rate);
-}
-
 rx_metadata_t receiver_make_metadata(uint64_t start_sample,
                                      uint32_t center_frequency_hz,
                                      uint16_t channel_index,

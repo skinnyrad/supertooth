@@ -117,16 +117,16 @@ void receiver_bredr_process_channel(receiver_bredr_channel_ctx_t *ctx,
         if (s != BREDR_VALID_PACKET)
             continue;
 
-        bredr_packet_t pkt;
-        if (bredr_get_packet(&ctx->proc, &pkt) != 0)
+        bredr_frame_t frame;
+        if (bredr_get_frame(&ctx->proc, &frame) != 0)
             continue;
         if (session->bredr_config.lap_filter_enabled &&
-            ((pkt.lap & 0xFFFFFFu) != session->bredr_config.lap_filter))
+            ((frame.lap & 0xFFFFFFu) != session->bredr_config.lap_filter))
             continue;
 
         unsigned long long bit_in_block = (unsigned long long)(i / RECEIVER_BREDR_SYMBOL_STEP);
-        unsigned long long bits_back = pkt.has_header
-            ? (58ULL + (unsigned long long)pkt.payload_bytes * 8ULL)
+        unsigned long long bits_back = frame.has_header
+            ? (58ULL + (unsigned long long)frame.payload_bits)
             : 0ULL;
         unsigned long long ac_bit_in_block = (bit_in_block >= bits_back)
             ? (bit_in_block - bits_back)
@@ -137,9 +137,6 @@ void receiver_bredr_process_channel(receiver_bredr_channel_ctx_t *ctx,
         unsigned int rssi_end = rssi_start + BREDR_AC_SAMPLES;
         if (rssi_end > decimated_samples)
             rssi_end = decimated_samples;
-        uint32_t clkn = receiver_bredr_sample_to_clkn(session, abs_raw);
-        pkt.rx_clk_ref = abs_raw;
-        pkt.rx_clk_1600 = receiver_bredr_sample_to_rx_clk_1600(session, abs_raw);
         float rssi_dbr =
             receiver_rssi_from_mean_power_range(ctx->decimated, rssi_start, rssi_end,
                                                 RECEIVER_RSSI_INVALID);
@@ -149,16 +146,16 @@ void receiver_bredr_process_channel(receiver_bredr_channel_ctx_t *ctx,
                                                                    RECEIVER_BREDR_CHANNEL_BW),
                                                     (uint16_t)ctx->bredr_channel,
                                                     rssi_dbr,
-                                                    (uint8_t)(255u - pkt.ac_errors));
-        decoded_packet_t decoded = {
-            .protocol = PROTO_BREDR,
+                                                    (uint8_t)(255u - frame.ac_errors));
+        bredr_event_t event = {
             .meta = meta,
+            .frame = frame,
         };
-        decoded.u.bredr = pkt;
 
         pthread_mutex_lock(&session->decoded_packet_mutex);
         bredr_piconet_t *pnet =
-            bredr_piconet_store_add_packet(&session->bredr_store, &decoded, clkn);
+            bredr_piconet_store_add_packet(&session->bredr_store, &event,
+                                           session->bredr_sample_rate);
         receiver_bredr_callbacks_t callbacks = session->bredr_callbacks;
         receiver_bredr_piconet_snapshot_t snapshot;
         receiver_bredr_piconet_snapshot_t *snapshot_ptr = NULL;
@@ -168,14 +165,14 @@ void receiver_bredr_process_channel(receiver_bredr_channel_ctx_t *ctx,
             snapshot_ptr = &snapshot;
         }
         session->bredr_total_packets++;
-        if (pkt.has_header)
+        if (frame.has_header)
             session->bredr_header_packets++;
         else
             session->bredr_id_packets++;
         pthread_mutex_unlock(&session->decoded_packet_mutex);
 
         if (callbacks.on_packet)
-            callbacks.on_packet(&decoded, snapshot_ptr, callbacks.user);
+            callbacks.on_packet(&event, snapshot_ptr, callbacks.user);
     }
 
     __atomic_add_fetch(&session->bredr_total_bits, local_bits, __ATOMIC_RELAXED);

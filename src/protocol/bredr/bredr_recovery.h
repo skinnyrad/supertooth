@@ -28,7 +28,7 @@ void bredr_recovery_state_destroy(bredr_recovery_state_t *state);
 void bredr_recovery_state_reset(bredr_recovery_state_t *state, uint32_t lap);
 
 int bredr_recovery_process_packet(bredr_recovery_state_t *state,
-                                  const bredr_packet_t *pkt,
+                                  const bredr_frame_t *frame,
                                   int channel,
                                   uint32_t clkn,
                                   bredr_recovery_result_t *out);

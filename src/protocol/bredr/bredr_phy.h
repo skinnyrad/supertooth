@@ -19,9 +19,9 @@
  *   // For every demodulated bit from the 1-Mbps channel:
  *   bredr_status_t s = bredr_push_bit(&proc, bit);
  *   if (s == BREDR_VALID_PACKET) {
- *       bredr_packet_t pkt;
- *       bredr_get_packet(&proc, &pkt);
- *       // Use pkt ...
+ *       bredr_frame_t frame;
+ *       bredr_get_frame(&proc, &frame);
+ *       // Use frame ...
  *   }
  * @endcode
  *
@@ -120,16 +120,16 @@ extern "C"
 #define BREDR_AC_SAMPLES (BREDR_AC_BITS * 2u)
 
 /* ---------------------------------------------------------------------------
- * bredr_packet_t — a captured BR/EDR packet
+ * bredr_frame_t — a captured BR/EDR PHY frame
  * ---------------------------------------------------------------------------*/
 
 /**
- * @brief A captured BR/EDR packet.
+ * @brief A captured BR/EDR PHY frame.
  *
  * Populated by the processor after a complete packet has been collected.
- * The LAP is extracted from the access code sync word.  The header fields
- * (lt_addr … hec) are decoded via 1/3 FEC majority vote.  The payload is
- * stored as raw bytes in reception (air) order and has NOT been dewhitened.
+ * The LAP is extracted from the access code sync word. The header is stored
+ * as the raw 54-bit FEC-encoded field captured from the air. The payload is
+ * stored in reception (air) order and has NOT been dewhitened.
  *
  * On-air packet layout (bits transmitted LSB-first):
  *  | Preamble (4 b) | Sync Word (64 b) | Trailer (4 b) |
@@ -144,51 +144,6 @@ typedef struct
     uint8_t  ac_errors;
 
     /**
-     * Receiver timestamp in 1600 Hz slot ticks at reception time.
-     * This is derived from rx_clk_ref using the configured RX sample clock
-     * and Bluetooth slot duration (625 us).
-     * Set by the caller before or immediately after bredr_get_packet().
-     * Defaults to 0 if not set.
-     */
-    uint32_t rx_clk_1600;
-
-    /**
-     * Hardware receive timestamp reference at reception time.
-     * This is the absolute RX sample-clock index used to derive rx_clk_1600.
-     * Set by the caller before or immediately after bredr_get_packet().
-     * Defaults to 0 if not set.
-     */
-    uint64_t rx_clk_ref;
-
-    /* -- Decoded packet header fields (after 1/3 FEC majority vote) ------- */
-
-    /** Logical Transport Address (3 bits). */
-    uint8_t  lt_addr;
-
-    /** Packet type field (4 bits).  See TYPE_NAMES[] in bredr_phy.c. */
-    uint8_t  type;
-
-    /** Flow control bit. */
-    uint8_t  flow;
-
-    /** Acknowledgement bit. */
-    uint8_t  arqn;
-
-    /** Sequence number bit. */
-    uint8_t  seqn;
-
-    /** Header error check byte (8 bits). */
-    uint8_t  hec;
-
-    /**
-     * HEC verification result.
-     *   0 — not verified (UAP is unknown; packet is not an inquiry packet)
-     *   1 — HEC passed  (inquiry packet; DCI=0x00 used as UAP)
-     *   2 — HEC failed  (inquiry packet; HEC does not match)
-     */
-    uint8_t  hec_valid;
-
-    /**
      * Raw 54 FEC-encoded header bits as received from the air.
      * Bit 0 = first received bit, bit 53 = last received bit.
      * Valid only when has_header != 0.
@@ -198,22 +153,27 @@ typedef struct
     /* -- Raw payload ------------------------------------------------------- */
 
     /**
-     * Payload bytes in reception order.  Not dewhitened.
-     * Valid bytes: payload[0 .. payload_bytes-1].
+     * Payload bytes in reception order. Not dewhitened.
+     * Valid bytes: payload[0 .. bredr_frame_payload_bytes(frame)-1].
      */
     uint8_t  payload[BREDR_MAX_PAYLOAD_BYTES];
 
-    /** Number of valid bytes in `payload[]`. */
-    unsigned int payload_bytes;
+    /** Exact number of on-air payload bits captured into payload[]. */
+    unsigned int payload_bits;
 
     /**
-     * Non-zero when this packet contains a decoded header and payload.
-     * Zero when the packet is a shortened access code (trailer was absent
+     * Non-zero when this frame contains a header and payload.
+     * Zero when the frame is a shortened access code (trailer was absent
      * or invalid) — in that case only `lap` and `ac_errors` are valid.
      */
     uint8_t has_header;
 
-} bredr_packet_t;
+} bredr_frame_t;
+
+static inline unsigned int bredr_frame_payload_bytes(const bredr_frame_t *frame)
+{
+    return frame ? ((frame->payload_bits + 7u) / 8u) : 0u;
+}
 
 /* ---------------------------------------------------------------------------
  * bredr_status_t — return codes for bredr_push_bit()
@@ -333,7 +293,7 @@ typedef struct
     /* -- Last valid packet ------------------------------------------------- */
 
     /** Most recently completed packet; valid when packet_ready != 0. */
-    bredr_packet_t last_packet;
+    bredr_frame_t last_frame;
 
     /** Non-zero when last_packet holds an unread valid packet. */
     int            packet_ready;
@@ -385,7 +345,7 @@ bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit);
  *
  * @return  0 on success, -1 if no valid packet is available.
  */
-int            bredr_get_packet(bredr_processor_t *proc, bredr_packet_t *out);
+int            bredr_get_frame(bredr_processor_t *proc, bredr_frame_t *out);
 
 /**
  * @brief Compute the 8-bit HEC for a 10-bit header value and a known UAP.
@@ -405,22 +365,6 @@ uint8_t        bredr_compute_hec(uint16_t data, uint8_t uap);
  *
  * Reconstructs the 18 whitened header bits from `pkt->header_raw` via
  * majority vote, then XORs with the PN-sequence for the given CLK1-6.
- * The result is 18 unwhitened bits in air order:
- *   bits  0– 2  LT_ADDR  (bit 0 = first transmitted)
- *   bits  3– 6  TYPE     (bit 0 = first transmitted)
- *   bit   7     FLOW
- *   bit   8     ARQN
- *   bit   9     SEQN
- *   bits 10–17  HEC      (bit 10 = first transmitted, i.e. LFSR bit 7)
- *
- * @param pkt   Packet with a valid `header_raw` field (has_header must be 1).
- * @param clk6  CLK1-6 whitening key (0–63).
- * @param bits  Output array of 18 bits, one per element (0 or 1).
- */
-void           bredr_decode_header_bits(const bredr_packet_t *pkt,
-                                        uint8_t clk6, uint8_t bits[18]);
-
-/**
  * @brief Generate a 64-bit BR/EDR sync word from a 24-bit LAP.
  *
  * Implements the (64,30) linear block code used to encode the LAP into
@@ -441,9 +385,6 @@ uint64_t       bredr_gen_syncword(uint32_t lap);
  * This is the number of bits the PHY targets when collecting a packet of
  * the given type — including FEC overhead where applicable.  The TYPE code
  * is the raw 4-bit field value (0–15) as it appears in the packet header.
- *
- * Used by external modules (e.g. bredr_piconet) to correct the rx_clk_1600
- * estimate after the true TYPE is decoded with a known CLK1-6.
  *
  * @param type_code  4-bit packet TYPE (0–15).
  * @return           On-air payload bits, or 0 for NULL/POLL.

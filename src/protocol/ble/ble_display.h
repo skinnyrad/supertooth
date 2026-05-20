@@ -3,12 +3,13 @@
 
 #include <stdint.h>
 
-#include "ble_phy.h"
+#include "ble_codec.h"
 #include "rx_metadata.h"
 
 const char *ble_pdu_type_name(uint8_t pdu_type);
-int ble_primary_addr(const ble_packet_t *pkt, const uint8_t **addr_out);
-void ble_format_addr(char out[18], const uint8_t *addr);
+int ble_primary_addr(const ble_packet_t *pkt, const ble_address_t **addr_out);
+void ble_format_addr(char out[18], const uint8_t addr[BLE_ADDR_LEN]);
+void ble_print_packet(const ble_packet_t *pkt);
 void ble_print_packet_summary_line(unsigned long packet_no,
                                    const ble_packet_t *pkt,
                                    const rx_metadata_t *meta);

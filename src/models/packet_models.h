@@ -8,7 +8,7 @@
 
 #include <stdint.h>
 
-#include "ble_phy.h"
+#include "ble_codec.h"
 #include "bredr_phy.h"
 #include "rx_metadata.h"
 
@@ -16,22 +16,17 @@
 extern "C" {
 #endif
 
-typedef enum
+typedef struct
 {
-    PROTO_BLE = 0,
-    PROTO_BREDR = 1,
-} protocol_t;
+    rx_metadata_t meta;
+    ble_frame_t frame;
+} ble_event_t;
 
 typedef struct
 {
-    protocol_t protocol;
     rx_metadata_t meta;
-    union
-    {
-        ble_packet_t ble;
-        bredr_packet_t bredr;
-    } u;
-} decoded_packet_t;
+    bredr_frame_t frame;
+} bredr_event_t;
 
 #ifdef __cplusplus
 }
