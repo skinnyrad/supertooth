@@ -119,19 +119,19 @@ const char *ble_pdu_type_name(uint8_t pdu_type)
 {
     switch (pdu_type & 0x0Fu)
     {
-    case 0x00u:
+    case BLE_PDU_ADV_IND:
         return "ADV_IND";
-    case 0x01u:
+    case BLE_PDU_ADV_DIRECT_IND:
         return "ADV_DIRECT_IND";
-    case 0x02u:
+    case BLE_PDU_ADV_NONCONN_IND:
         return "ADV_NONCONN_IND";
-    case 0x03u:
+    case BLE_PDU_SCAN_REQ:
         return "SCAN_REQ";
-    case 0x04u:
+    case BLE_PDU_SCAN_RSP:
         return "SCAN_RSP";
-    case 0x05u:
+    case BLE_PDU_CONNECT_IND:
         return "CONNECT_IND";
-    case 0x06u:
+    case BLE_PDU_ADV_SCAN_IND:
         return "ADV_SCAN_IND";
     default:
         return "RESERVED";

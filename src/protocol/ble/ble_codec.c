@@ -23,7 +23,6 @@ static void ble_decode_adv_data_packet(ble_adv_data_packet_t *out,
                                        unsigned int payload_len,
                                        ble_addr_kind_t addr_kind)
 {
-    memset(out, 0, sizeof(*out));
     if (!payload || payload_len < BLE_ADDR_LEN)
         return;
 
@@ -42,7 +41,6 @@ static void ble_decode_adv_direct_packet(ble_adv_direct_packet_t *out,
                                          ble_addr_kind_t tx_kind,
                                          ble_addr_kind_t rx_kind)
 {
-    memset(out, 0, sizeof(*out));
     if (!payload || payload_len < (2u * BLE_ADDR_LEN))
         return;
 
@@ -56,7 +54,6 @@ static void ble_decode_scan_req_packet(ble_scan_req_packet_t *out,
                                        ble_addr_kind_t tx_kind,
                                        ble_addr_kind_t rx_kind)
 {
-    memset(out, 0, sizeof(*out));
     if (!payload || payload_len < (2u * BLE_ADDR_LEN))
         return;
 
@@ -70,7 +67,6 @@ static void ble_decode_connect_ind_packet(ble_connect_ind_packet_t *out,
                                           ble_addr_kind_t tx_kind,
                                           ble_addr_kind_t rx_kind)
 {
-    memset(out, 0, sizeof(*out));
     if (!payload || payload_len < (2u * BLE_ADDR_LEN))
         return;
 
@@ -88,7 +84,6 @@ static void ble_decode_unknown_packet(ble_unknown_packet_t *out,
                                       const uint8_t *payload,
                                       unsigned int payload_len)
 {
-    memset(out, 0, sizeof(*out));
     if (!payload)
         return;
 
