@@ -13,7 +13,7 @@ Supertooth is a C-based software-defined radio (SDR) project for receiving and d
 It includes three runtime binaries:
 
 1. `supertooth-rx`: BR/EDR multichannel receiver with piconet tracking.
-2. `supertooth-btle`: BLE advertising capture/decoder on channel 37 (2.402 GHz).
+2. `supertooth-ble`: BLE advertising capture/decoder on channel 37 (2.402 GHz).
 3. `supertooth-hybrid`: simultaneous BR/EDR multichannel + BLE channel 37 processing from a shared stream.
 
 ## Prerequisites
@@ -30,7 +30,7 @@ On macOS (Homebrew), the CMake files prioritize `/opt/homebrew` and `/usr/local`
 ### Core dependencies (what they do)
 
 - `liquid-dsp`: DSP primitives used for channelization, filtering, NCO mixing, and GFSK/CPFSK demodulation.
-- `libhackrf`: HackRF device API used by runtime binaries and live examples to configure and stream SDR samples.
+- `libhackrf`: HackRF device API used by runtime binaries to configure and stream SDR samples.
 - `libbtbb`: Bluetooth baseband helpers used for BR/EDR access-code workflows and piconet UAP/clock recovery.
 
 ### Install dependencies
@@ -58,28 +58,20 @@ brew install cmake pkg-config hackrf liquid-dsp libbtbb
 From repository root:
 
 ```bash
-mkdir build
-cmake ..
-make
-```
-
-To build the examples run:
-
-```bash
-make examples
+cmake -S . -B build
+cmake --build build
 ```
 
 Output binaries are in:
 
 - `build/src/` (main executables)
-- `build/examples/` (example tools)
 
 ## Run
 
 Main binaries (require HackRF hardware):
 
 ```bash
-./build/src/supertooth-btle --view full
+./build/src/supertooth-ble --view full
 ./build/src/supertooth-rx --view full
 ./build/src/supertooth-hybrid --view full
 ```
@@ -90,38 +82,45 @@ Main binaries (require HackRF hardware):
 ./build/src/supertooth-rx --help
 ```
 
-`supertooth-btle` and `supertooth-hybrid` also support:
+`supertooth-ble` and `supertooth-hybrid` also support:
 
 ```bash
 --view full|summary
 --debug
 ```
 
-`supertooth-btle` additionally supports:
+`supertooth-ble` additionally supports:
 
 ```bash
 --ble-channel 37|38|39
 ```
 
-## Basic architecture
+## Architecture
 
-### Signal processing runtimes (`src/`)
+Supertooth is organized as a layered core library with thin CLI entrypoints.
 
-- `supertooth-btle.c`: HackRF callback → I/Q normalization → Liquid-DSP GFSK demodulation → `ble_push_bit()`.
-- `supertooth-rx.c`: wideband capture across configurable BR/EDR channel span; per-channel NCO mixing + FIR decimation + CPFSK demod; packet/piconet handling.
-- `supertooth-hybrid.c`: combined BR/EDR channel workers plus BLE channel 37 worker using shared buffer generations.
+### Source layout
 
-### Protocol decoders
+```text
+src/
+  apps/            CLI binaries and presentation
+  service/         session API and runtime orchestration
+  dsp/             channelization, demodulation, sample-processing callbacks
+  radio/           HackRF integration
+  models/          shared packet and receive metadata types
+  protocol/
+    ble/           BLE framing, codec helpers, assigned-number helpers
+    bredr/         BR/EDR framing, codec helpers, tracking, recovery
+```
 
-- `ble_phy.c/h`: per-channel BLE push-bit processor (preamble/AA detect, collect, dewhiten, CRC verify, packet API).
-- `bredr_phy.c/h`: BR/EDR push-bit processor (access-code detect, FEC header decode, payload collection).
-- `bredr_piconet.c/h`: per-piconet tracking state and packet ring.
-- `bredr_piconet_store.c/h`: LAP-keyed piconet store with libbtbb-assisted UAP/clock recovery.
+### Main layers
 
-### Hardware abstraction
+- `src/apps/`: `supertooth-rx`, `supertooth-ble`, and `supertooth-hybrid` user-facing binaries.
+- `src/service/`: reusable library boundary built around `receiver_session`.
+- `src/dsp/`: mode-specific DSP implementations extracted from session orchestration.
+- `src/radio/`: HackRF lifecycle and configuration wrapper.
+- `src/models/`: `decoded_packet_t` and `rx_metadata_t`.
+- `src/protocol/ble/`: BLE framing and decode support.
+- `src/protocol/bredr/`: BR/EDR framing, measurement, tracking, and recovery support.
 
-- `hackrf.c/h`: wraps HackRF lifecycle and common RF parameter configuration.
-
-### Examples and tools
-
-- `examples/`: standalone tools for recording, demodulation experiments, BR/EDR scanning/detection, CSV export, and channel utilities.
+For a broader description of the current architecture, see `docs/architecture.md`.
