@@ -178,6 +178,7 @@ bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit)
         return BREDR_ERROR;
 
     uint8_t b = bit ? 1u : 0u;
+    proc->total_bits_seen++;
 
     /* ======================================================================
      * STATE: SEARCHING
@@ -212,6 +213,7 @@ bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit)
         /* Access code matched. */
         proc->detected_lap = lap;
         proc->detected_ac_errors = ac_errors;
+        proc->detected_packet_start_bit = proc->total_bits_seen - 68u;
         /* GIAC/LIAC inquiry packets are always ID packets: a shortened access
          * code with no trailer, no header, and no payload.  FHS responses from
          * slaves use the slave's own Device Access Code, not the GIAC/LIAC, so
@@ -220,6 +222,7 @@ bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit)
         if (lap == BREDR_LAP_GIAC || lap == BREDR_LAP_LIAC)
         {
             memset(&proc->last_frame, 0, sizeof(proc->last_frame));
+            proc->last_frame.start_bit_index = proc->detected_packet_start_bit;
             proc->last_frame.lap = lap;
             proc->last_frame.ac_errors = ac_errors;
             proc->last_frame.has_header = 0u;
@@ -265,6 +268,7 @@ bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit)
         {
             /* Invalid trailer: shortened access code, no header or payload. */
             memset(&proc->last_frame, 0, sizeof(proc->last_frame));
+            proc->last_frame.start_bit_index = proc->detected_packet_start_bit;
             proc->last_frame.lap = proc->detected_lap;
             proc->last_frame.ac_errors = proc->detected_ac_errors;
             proc->last_frame.has_header = 0u;
@@ -296,8 +300,13 @@ bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit)
     }
 
     /* -------------------------------------------------------------------
-     * After the 54-bit FEC-encoded header is collected, decode it to learn
-     * the packet type and calculate the total collection target.
+     * After the 54-bit FEC-encoded header is collected, stash the raw header
+     * bits and switch to a fixed post-access-code ceiling.
+     *
+     * The BR/EDR header is whitened, so without CLK1-6 we cannot trust the
+     * TYPE field yet. Sizing capture from the still-whitened header can stop
+     * collection early and truncate a valid packet, so we retain the maximum
+     * possible body instead.
      * ------------------------------------------------------------------- */
     if (!proc->header_decoded && proc->bits_collected >= 54u)
     {
@@ -305,28 +314,20 @@ bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit)
         for (unsigned int i = 0u; i < 54u; i++)
             if (read_symbol_bit(proc, i))
                 header_raw |= (uint64_t)1u << i;
-
-        uint8_t type = 0u;
-        bredr_decode_fec_header_raw(header_raw, NULL, &type, NULL, NULL, NULL, NULL);
         proc->last_frame.header_raw = header_raw;
-
-        unsigned int payload_bits = bredr_on_air_payload_bits(type);
-        proc->bits_to_collect = 54u + payload_bits;
-        /* Cap at the buffer ceiling. */
-        if (proc->bits_to_collect > BREDR_SYMBOLS_MAX)
-            proc->bits_to_collect = BREDR_SYMBOLS_MAX;
+        proc->bits_to_collect = BREDR_BODY_BITS_MAX;
 
         proc->header_decoded = 1;
     }
 
     /* -------------------------------------------------------------------
      * Determine how many bits we are waiting for.
-     * Before the header is decoded, collect up to BREDR_SYMBOLS_MAX bits as
+     * Before the header is decoded, collect up to BREDR_BODY_BITS_MAX bits as
      * a safety ceiling (should not normally happen given the 54-bit trigger).
      * ------------------------------------------------------------------- */
     unsigned int target = proc->header_decoded
                               ? proc->bits_to_collect
-                              : BREDR_SYMBOLS_MAX;
+                              : BREDR_BODY_BITS_MAX;
 
     if (proc->bits_collected < target)
         return BREDR_COLLECTING;
@@ -339,6 +340,7 @@ bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit)
     /* header_raw was stored in frame earlier; save it across the memset. */
     uint64_t saved_header_raw = frame->header_raw;
     memset(frame, 0, sizeof(*frame));
+    frame->start_bit_index = proc->detected_packet_start_bit;
     frame->lap = proc->detected_lap;
     frame->ac_errors = proc->detected_ac_errors;
     frame->has_header = 1u;

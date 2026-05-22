@@ -5,22 +5,6 @@
 #include <stdio.h>
 #include <string.h>
 
-static unsigned long long receiver_bredr_event_bits_back(const bredr_frame_t *frame)
-{
-    if (!frame)
-        return 0ULL;
-
-    if (frame->has_header)
-        return (unsigned long long)(BREDR_AC_BITS - 1u + 54u) +
-               (unsigned long long)frame->payload_bits;
-
-    if ((frame->lap & 0xFFFFFFu) == BREDR_LAP_GIAC ||
-        (frame->lap & 0xFFFFFFu) == BREDR_LAP_LIAC)
-        return 67ULL;
-
-    return (unsigned long long)(BREDR_AC_BITS - 1u);
-}
-
 void receiver_bredr_update_layout(receiver_session_t *session)
 {
     unsigned int channel_count = session->bredr_config.channel_count;
@@ -116,6 +100,7 @@ void receiver_bredr_process_channel(receiver_bredr_channel_ctx_t *ctx,
                                     receiver_bredr_block_t *blk)
 {
     receiver_session_t *session = ctx->session;
+    uint64_t block_start_bit_index = ctx->proc.total_bits_seen;
     nco_crcf_mix_block_down(ctx->nco, blk->samples, ctx->mixed, blk->num_samples);
 
     unsigned int decimated_samples = blk->num_samples / session->bredr_decim_factor;
@@ -140,20 +125,43 @@ void receiver_bredr_process_channel(receiver_bredr_channel_ctx_t *ctx,
             ((frame.lap & 0xFFFFFFu) != session->bredr_config.lap_filter))
             continue;
 
-        unsigned long long bit_in_block = (unsigned long long)(i / RECEIVER_BREDR_SYMBOL_STEP);
-        unsigned long long bits_back = receiver_bredr_event_bits_back(&frame);
-        unsigned long long ac_bit_in_block = (bit_in_block >= bits_back)
-            ? (bit_in_block - bits_back)
-            : 0ULL;
-        unsigned long long abs_raw =
-            blk->block_base_sample + ac_bit_in_block * session->bredr_raw_samps_per_bit;
-        unsigned int rssi_start = (unsigned int)(ac_bit_in_block * RECEIVER_BREDR_SYMBOL_STEP);
+        unsigned long long abs_raw = blk->block_base_sample;
+        if (frame.start_bit_index >= block_start_bit_index)
+        {
+            unsigned long long bits_from_block_start =
+                frame.start_bit_index - block_start_bit_index;
+            abs_raw += bits_from_block_start *
+                       (unsigned long long)session->bredr_raw_samps_per_bit;
+        }
+        else
+        {
+            unsigned long long bits_before_block =
+                block_start_bit_index - frame.start_bit_index;
+            unsigned long long samples_before_block =
+                bits_before_block * (unsigned long long)session->bredr_raw_samps_per_bit;
+            abs_raw = (samples_before_block <= blk->block_base_sample)
+                ? (blk->block_base_sample - samples_before_block)
+                : 0ULL;
+        }
+        unsigned int rssi_start = decimated_samples;
+        if (abs_raw >= blk->block_base_sample)
+        {
+            unsigned long long start_sample_in_block = abs_raw - blk->block_base_sample;
+            unsigned long long start_decimated =
+                start_sample_in_block / (unsigned long long)session->bredr_decim_factor;
+            if (start_decimated < decimated_samples)
+                rssi_start = (unsigned int)start_decimated;
+        }
         unsigned int rssi_end = rssi_start + BREDR_AC_SAMPLES;
         if (rssi_end > decimated_samples)
             rssi_end = decimated_samples;
-        float rssi_dbr =
-            receiver_rssi_from_mean_power_range(ctx->decimated, rssi_start, rssi_end,
-                                                RECEIVER_RSSI_INVALID);
+        float rssi_dbr = RECEIVER_RSSI_INVALID;
+        if (rssi_start < rssi_end)
+        {
+            rssi_dbr =
+                receiver_rssi_from_mean_power_range(ctx->decimated, rssi_start, rssi_end,
+                                                    RECEIVER_RSSI_INVALID);
+        }
         rx_metadata_t meta = receiver_make_metadata(abs_raw,
                                                     (uint32_t)(RECEIVER_BREDR_CHANNEL_0_FREQ +
                                                                (double)ctx->bredr_channel *

@@ -5,9 +5,18 @@
 
 #include "bredr_codec.h"
 
+#include <string.h>
+
 static const unsigned int s_payload_bits[16] = {
     0, 0, 240, 480, 216, 240, 240, 240,
     560, 232, 1500, 1464, 1440, 1440, 2736, 2712,
+};
+
+static const char *const s_bredr_type_names[16] = {
+    "NULL", "POLL", "FHS", "DM1",
+    "DH1", "HV1", "HV2", "HV3",
+    "DV", "AUX1", "DM3", "DH3",
+    "EV4", "EV5", "DM5", "DH5"
 };
 
 static const uint8_t s_whitening_indices[64] = {
@@ -30,6 +39,287 @@ static uint8_t read_packed_bit(const uint8_t *data, unsigned int bit_pos)
     unsigned int byte_idx = bit_pos / 8u;
     unsigned int bit_idx = bit_pos % 8u;
     return (uint8_t)((data[byte_idx] >> bit_idx) & 1u);
+}
+
+static void write_packed_bit(uint8_t *data, unsigned int bit_pos, uint8_t bit)
+{
+    unsigned int byte_idx = bit_pos / 8u;
+    unsigned int bit_idx = bit_pos % 8u;
+    if (bit & 1u)
+        data[byte_idx] |= (uint8_t)(1u << bit_idx);
+}
+
+static uint32_t read_packed_field(const uint8_t *data,
+                                  unsigned int bit_offset,
+                                  unsigned int bit_count)
+{
+    uint32_t value = 0u;
+
+    for (unsigned int i = 0u; i < bit_count; i++)
+        value |= (uint32_t)read_packed_bit(data, bit_offset + i) << i;
+
+    return value;
+}
+
+static bredr_payload_family_t bredr_classify_family(uint8_t type_code)
+{
+    switch (type_code & 0x0Fu)
+    {
+    case 0x00u:
+    case 0x01u:
+        return BREDR_PAYLOAD_FAMILY_CONTROL;
+    case 0x02u:
+        return BREDR_PAYLOAD_FAMILY_FHS;
+    case 0x03u:
+    case 0x04u:
+    case 0x09u:
+    case 0x0Au:
+    case 0x0Bu:
+    case 0x0Eu:
+    case 0x0Fu:
+        return BREDR_PAYLOAD_FAMILY_ACL;
+    case 0x05u:
+    case 0x06u:
+    case 0x07u:
+        return BREDR_PAYLOAD_FAMILY_SCO;
+    case 0x08u:
+        return BREDR_PAYLOAD_FAMILY_HYBRID;
+    case 0x0Cu:
+    case 0x0Du:
+        return BREDR_PAYLOAD_FAMILY_ESCO;
+    default:
+        return BREDR_PAYLOAD_FAMILY_UNKNOWN;
+    }
+}
+
+static bredr_payload_coding_t bredr_classify_coding(uint8_t type_code)
+{
+    switch (type_code & 0x0Fu)
+    {
+    case 0x02u:
+    case 0x03u:
+    case 0x06u:
+    case 0x0Au:
+    case 0x0Cu:
+    case 0x0Eu:
+        return BREDR_PAYLOAD_CODING_FEC_2_3;
+    case 0x05u:
+        return BREDR_PAYLOAD_CODING_FEC_1_3;
+    case 0x00u:
+    case 0x01u:
+    case 0x04u:
+    case 0x07u:
+    case 0x08u:
+    case 0x09u:
+    case 0x0Bu:
+    case 0x0Du:
+    case 0x0Fu:
+        return BREDR_PAYLOAD_CODING_NONE;
+    default:
+        return BREDR_PAYLOAD_CODING_UNKNOWN;
+    }
+}
+
+static int bredr_acl_payload_header_bytes(uint8_t type_code)
+{
+    switch (type_code & 0x0Fu)
+    {
+    case 0x03u:
+    case 0x04u:
+    case 0x08u:
+    case 0x09u:
+        return 1;
+    case 0x0Au:
+    case 0x0Bu:
+    case 0x0Eu:
+    case 0x0Fu:
+        return 2;
+    default:
+        return 0;
+    }
+}
+
+static int bredr_payload_supports_direct_parse(uint8_t type_code)
+{
+    switch (type_code & 0x0Fu)
+    {
+    case 0x04u:
+    case 0x09u:
+    case 0x0Bu:
+    case 0x0Fu:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+static unsigned int bredr_whitening_index_after_bits(uint8_t clk6,
+                                                     unsigned int logical_bits)
+{
+    return (unsigned int)((s_whitening_indices[clk6 & 0x3Fu] + logical_bits) % 127u);
+}
+
+static unsigned int bredr_unwhiten_payload_bytes(const uint8_t *src,
+                                                 unsigned int src_bits,
+                                                 uint8_t clk6,
+                                                 unsigned int logical_offset_bits,
+                                                 uint8_t *dst,
+                                                 unsigned int dst_capacity)
+{
+    unsigned int bytes = (src_bits + 7u) / 8u;
+    unsigned int index;
+
+    if (bytes > dst_capacity)
+        bytes = dst_capacity;
+
+    memset(dst, 0, dst_capacity);
+    index = bredr_whitening_index_after_bits(clk6, logical_offset_bits);
+
+    for (unsigned int bit_pos = 0u; bit_pos < src_bits; bit_pos++)
+    {
+        uint8_t bit = read_packed_bit(src, bit_pos) ^ s_whitening_data[index];
+        write_packed_bit(dst, bit_pos, bit);
+        index = (index + 1u) % 127u;
+    }
+
+    return bytes;
+}
+
+static void bredr_fill_decoded_header(const uint8_t bits[18], bredr_decoded_header_t *out)
+{
+    out->lt_addr = (uint8_t)(bits[0] | (bits[1] << 1) | (bits[2] << 2));
+    out->type = (uint8_t)(bits[3] | (bits[4] << 1) | (bits[5] << 2) | (bits[6] << 3));
+    out->flow = bits[7];
+    out->arqn = bits[8];
+    out->seqn = bits[9];
+    out->hec = 0u;
+    for (int i = 0; i < 8; i++)
+        out->hec |= (uint8_t)(bits[10 + i] << (7 - i));
+}
+
+static int bredr_decode_header(const bredr_frame_t *frame,
+                               uint8_t uap,
+                               uint8_t clk6,
+                               bredr_decoded_header_t *out)
+{
+    uint8_t bits[18];
+    uint16_t hdr_data = 0u;
+
+    bredr_decode_header_bits(frame, clk6, bits);
+    bredr_fill_decoded_header(bits, out);
+
+    for (int i = 0; i < 10; i++)
+        hdr_data |= (uint16_t)(bits[i] << i);
+
+    out->hec_ok = (uint8_t)(bredr_compute_hec(hdr_data, uap) == out->hec);
+    return out->hec_ok;
+}
+
+static int bredr_parse_lmp(const uint8_t *body,
+                           unsigned int body_len,
+                           bredr_lmp_packet_t *out)
+{
+    uint8_t first_opcode;
+    unsigned int params_offset;
+
+    if (!body || !out || body_len == 0u)
+        return 0;
+
+    memset(out, 0, sizeof(*out));
+    out->tid = body[0] & 0x01u;
+    first_opcode = (uint8_t)(body[0] >> 1u);
+    out->opcode = first_opcode;
+
+    if (first_opcode >= 124u)
+    {
+        if (body_len < 2u)
+            return 0;
+        out->has_ext_opcode = 1u;
+        out->ext_opcode = body[1];
+        params_offset = 2u;
+    }
+    else
+    {
+        params_offset = 1u;
+    }
+
+    out->params_len = (uint16_t)(body_len - params_offset);
+    if (out->params_len > sizeof(out->params))
+        out->params_len = (uint16_t)sizeof(out->params);
+    memcpy(out->params, body + params_offset, out->params_len);
+    return 1;
+}
+
+static int bredr_parse_acl_payload(const uint8_t *payload,
+                                   unsigned int payload_len,
+                                   uint8_t type_code,
+                                   bredr_acl_packet_t *out,
+                                   bredr_decode_limit_t *limit)
+{
+    int header_bytes = bredr_acl_payload_header_bytes(type_code);
+    unsigned int body_len;
+
+    if (!payload || !out || header_bytes == 0)
+    {
+        if (limit)
+            *limit = BREDR_DECODE_LIMIT_INVALID_ACL_HEADER;
+        return 0;
+    }
+    if (payload_len < (unsigned int)header_bytes)
+    {
+        if (limit)
+            *limit = BREDR_DECODE_LIMIT_TRUNCATED_PAYLOAD;
+        return 0;
+    }
+
+    memset(out, 0, sizeof(*out));
+    out->payload_header_bytes = (uint8_t)header_bytes;
+    out->llid = (bredr_llid_t)(payload[0] & 0x03u);
+    out->flow = (uint8_t)((payload[0] >> 2u) & 0x01u);
+    out->length = (uint16_t)((payload[0] >> 3u) & 0x1Fu);
+    if (header_bytes == 2)
+        out->length |= (uint16_t)((payload[1] & 0x1Fu) << 5u);
+
+    if (out->length < out->payload_header_bytes)
+    {
+        if (limit)
+            *limit = BREDR_DECODE_LIMIT_INVALID_ACL_HEADER;
+        return 0;
+    }
+
+    body_len = (unsigned int)(out->length - out->payload_header_bytes);
+    if (payload_len < (unsigned int)out->payload_header_bytes + body_len)
+    {
+        if (limit)
+            *limit = BREDR_DECODE_LIMIT_TRUNCATED_PAYLOAD;
+        return 0;
+    }
+
+    out->body_len = (uint16_t)body_len;
+    memcpy(out->body, payload + out->payload_header_bytes, body_len);
+
+    if ((out->llid == BREDR_LLID_L2CAP_START || out->llid == BREDR_LLID_CONTINUATION) && body_len >= 4u)
+    {
+        out->has_l2cap = 1u;
+        out->l2cap.pdu_length = (uint16_t)(out->body[0] | ((uint16_t)out->body[1] << 8u));
+        out->l2cap.cid = (uint16_t)(out->body[2] | ((uint16_t)out->body[3] << 8u));
+        out->l2cap.payload_len = (uint8_t)((body_len >= 4u) ? (body_len - 4u) : 0u);
+        if ((out->l2cap.cid == 0x0001u || out->l2cap.cid == 0x0005u) && body_len >= 8u)
+        {
+            out->has_l2cap_signal = 1u;
+            out->l2cap_signal.code = out->body[4];
+            out->l2cap_signal.identifier = out->body[5];
+            out->l2cap_signal.length = (uint16_t)(out->body[6] | ((uint16_t)out->body[7] << 8u));
+        }
+    }
+    else if (out->llid == BREDR_LLID_CONTROL)
+    {
+        out->has_lmp = (uint8_t)bredr_parse_lmp(out->body, body_len, &out->lmp);
+    }
+
+    if (limit)
+        *limit = BREDR_DECODE_LIMIT_NONE;
+    return 1;
 }
 
 /**
@@ -196,4 +486,172 @@ int bredr_hec_ok_for_clk6(const bredr_frame_t *frame, uint8_t uap, uint8_t clk6)
         received_hec |= (uint8_t)(bits[10 + i] << (7 - i));
 
     return bredr_compute_hec(hdr_data, uap) == received_hec;
+}
+
+const char *bredr_packet_type_name(uint8_t type_code)
+{
+    return s_bredr_type_names[type_code & 0x0Fu];
+}
+
+const char *bredr_payload_family_name(bredr_payload_family_t family)
+{
+    switch (family)
+    {
+    case BREDR_PAYLOAD_FAMILY_NONE:
+        return "None";
+    case BREDR_PAYLOAD_FAMILY_CONTROL:
+        return "Control";
+    case BREDR_PAYLOAD_FAMILY_FHS:
+        return "FHS";
+    case BREDR_PAYLOAD_FAMILY_ACL:
+        return "ACL";
+    case BREDR_PAYLOAD_FAMILY_SCO:
+        return "SCO";
+    case BREDR_PAYLOAD_FAMILY_ESCO:
+        return "eSCO";
+    case BREDR_PAYLOAD_FAMILY_HYBRID:
+        return "Hybrid";
+    case BREDR_PAYLOAD_FAMILY_UNKNOWN:
+    default:
+        return "Unknown";
+    }
+}
+
+const char *bredr_decode_limit_desc(bredr_decode_limit_t limit)
+{
+    switch (limit)
+    {
+    case BREDR_DECODE_LIMIT_NONE:
+        return "none";
+    case BREDR_DECODE_LIMIT_NO_HEADER:
+        return "no header available";
+    case BREDR_DECODE_LIMIT_MISSING_CONTEXT:
+        return "missing UAP/CLK1-6 context";
+    case BREDR_DECODE_LIMIT_HEC_FAILED:
+        return "header HEC failed";
+    case BREDR_DECODE_LIMIT_UNSUPPORTED_PACKET_TYPE:
+        return "packet type not yet supported";
+    case BREDR_DECODE_LIMIT_UNSUPPORTED_PAYLOAD_CODING:
+        return "payload coding not yet supported";
+    case BREDR_DECODE_LIMIT_TRUNCATED_PAYLOAD:
+        return "payload shorter than indicated";
+    case BREDR_DECODE_LIMIT_INVALID_ACL_HEADER:
+        return "invalid ACL payload header";
+    default:
+        return "unknown decode limit";
+    }
+}
+
+const char *bredr_llid_name(bredr_llid_t llid)
+{
+    switch (llid)
+    {
+    case BREDR_LLID_RESERVED:
+        return "Reserved";
+    case BREDR_LLID_CONTINUATION:
+        return "Continuation";
+    case BREDR_LLID_L2CAP_START:
+        return "L2CAP Start";
+    case BREDR_LLID_CONTROL:
+        return "Control/LMP";
+    default:
+        return "Unknown";
+    }
+}
+
+int bredr_decode_frame(const bredr_frame_t *frame,
+                       const bredr_decode_context_t *ctx,
+                       bredr_packet_t *out)
+{
+    uint8_t dewhitened[BREDR_MAX_PAYLOAD_BYTES];
+
+    if (!frame || !out)
+        return -1;
+
+    memset(out, 0, sizeof(*out));
+    out->status = BREDR_DECODE_RAW_ONLY;
+    out->limit = BREDR_DECODE_LIMIT_NONE;
+    out->family = BREDR_PAYLOAD_FAMILY_NONE;
+    out->coding = BREDR_PAYLOAD_CODING_NONE;
+    out->raw_payload_bytes = (uint16_t)bredr_frame_payload_bytes(frame);
+
+    if (!frame->has_header)
+    {
+        out->limit = BREDR_DECODE_LIMIT_NO_HEADER;
+        return 0;
+    }
+
+    if (!ctx || !ctx->have_uap || !ctx->have_clk1_6)
+    {
+        out->limit = BREDR_DECODE_LIMIT_MISSING_CONTEXT;
+        return 0;
+    }
+
+    if (!bredr_decode_header(frame, ctx->uap, ctx->clk1_6, &out->header))
+    {
+        out->limit = BREDR_DECODE_LIMIT_HEC_FAILED;
+        return 0;
+    }
+
+    out->has_decoded_header = 1u;
+    out->type = out->header.type;
+    out->family = bredr_classify_family(out->type);
+    out->coding = bredr_classify_coding(out->type);
+    out->status = BREDR_DECODE_HEADER_ONLY;
+
+    if (out->family == BREDR_PAYLOAD_FAMILY_CONTROL)
+    {
+        out->status = BREDR_DECODE_FULL_PAYLOAD;
+        return 0;
+    }
+
+    out->status = BREDR_DECODE_FAMILY_ONLY;
+
+    if (!bredr_payload_supports_direct_parse(out->type))
+    {
+        out->limit = (out->coding == BREDR_PAYLOAD_CODING_NONE)
+                         ? BREDR_DECODE_LIMIT_UNSUPPORTED_PACKET_TYPE
+                         : BREDR_DECODE_LIMIT_UNSUPPORTED_PAYLOAD_CODING;
+
+        if (out->family == BREDR_PAYLOAD_FAMILY_SCO || out->family == BREDR_PAYLOAD_FAMILY_ESCO)
+        {
+            out->payload.sync.payload_bytes = out->raw_payload_bytes;
+            out->payload.sync.is_esco = (uint8_t)(out->family == BREDR_PAYLOAD_FAMILY_ESCO);
+        }
+        else if (out->family == BREDR_PAYLOAD_FAMILY_FHS)
+        {
+            out->payload.unknown.payload_bytes = out->raw_payload_bytes;
+        }
+        else
+        {
+            out->payload.unknown.payload_bytes = out->raw_payload_bytes;
+        }
+        return 0;
+    }
+
+    out->decoded_payload_bytes = (uint16_t)bredr_unwhiten_payload_bytes(frame->payload,
+                                                                         frame->payload_bits,
+                                                                         ctx->clk1_6,
+                                                                         18u,
+                                                                         dewhitened,
+                                                                         sizeof(dewhitened));
+
+    if (out->family == BREDR_PAYLOAD_FAMILY_ACL)
+    {
+        if (!bredr_parse_acl_payload(dewhitened,
+                                     out->decoded_payload_bytes,
+                                     out->type,
+                                     &out->payload.acl,
+                                     &out->limit))
+        {
+            out->status = BREDR_DECODE_PARTIAL_PAYLOAD;
+            return 0;
+        }
+
+        out->status = BREDR_DECODE_FULL_PAYLOAD;
+        return 0;
+    }
+
+    out->limit = BREDR_DECODE_LIMIT_UNSUPPORTED_PACKET_TYPE;
+    return 0;
 }

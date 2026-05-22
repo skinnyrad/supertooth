@@ -45,10 +45,13 @@
  * -----------------
  * After the AC is confirmed, the processor drains the 4-bit trailer, then
  * collects the 54-bit FEC-encoded packet header (18 header bits repeated
- * three times — 1/3 rate FEC with majority-vote decode).  The TYPE field
- * from the header determines how many additional payload bits are collected.
- * Payload bytes are stored raw (air order, not dewhitened — clock bits
- * required for dewhitening are not available to a promiscuous receiver).
+ * three times — 1/3 rate FEC with majority-vote decode). Because the BR/EDR
+ * header is whitened and the whitening clock is not yet known at this stage,
+ * the PHY does not trust the still-whitened TYPE field to determine packet
+ * length. Instead it retains the maximum possible post-access-code body for a
+ * 5-slot Basic Rate packet and leaves semantic decode to higher layers once
+ * UAP/CLK context exists. Payload bytes are stored raw (air order, not
+ * dewhitened).
  *
  * Thread safety
  * -------------
@@ -78,14 +81,30 @@ extern "C"
  * Public constants
  * ---------------------------------------------------------------------------*/
 
-/** Maximum payload bytes stored per packet (DH5 payload = 339 bytes). */
-#define BREDR_MAX_PAYLOAD_BYTES  343u
-
 /**
- * Maximum on-air symbols (bits) that can be collected after the AC.
- * Covers the largest 5-slot BR/EDR packet at 1 Mbps.
+ * Maximum total on-air symbols (bits) in a 5-slot Basic Rate BR/EDR packet.
+ * This includes the access code, header, and payload.
  */
 #define BREDR_SYMBOLS_MAX       3125u
+
+/**
+ * Maximum header+payload bits remaining after the 72-bit access code.
+ * The PHY collection buffer stores only these post-access-code bits.
+ */
+#define BREDR_BODY_BITS_MAX     (BREDR_SYMBOLS_MAX - BREDR_AC_BITS)
+
+/**
+ * Maximum raw payload bits that may be retained in bredr_frame_t after the
+ * 54-bit FEC-encoded header has been removed from the captured body.
+ */
+#define BREDR_MAX_PAYLOAD_BITS  (BREDR_BODY_BITS_MAX - 54u)
+
+/**
+ * Maximum payload bytes stored per packet for raw capture. This is larger
+ * than the semantic DH5 user payload ceiling because PHY storage may retain
+ * the full captured payload body before higher-layer decode narrows it.
+ */
+#define BREDR_MAX_PAYLOAD_BYTES ((BREDR_MAX_PAYLOAD_BITS + 7u) / 8u)
 
 /** Default maximum Hamming distance allowed in access-code matching. */
 #define BREDR_AC_ERRORS_DEFAULT    2u
@@ -137,6 +156,9 @@ extern "C"
  */
 typedef struct
 {
+    /** Absolute bit index of the access-code start in the channel bitstream. */
+    uint64_t start_bit_index;
+
     /** 24-bit Lower Address Part extracted from the access code sync word. */
     uint32_t lap;
 
@@ -236,6 +258,9 @@ typedef struct
     /** Total bits shifted into sw_window; saturates at 64. */
     unsigned int bits_seen;
 
+    /** Absolute number of demodulated bits consumed by this processor. */
+    uint64_t total_bits_seen;
+
     /* -- State machine ----------------------------------------------------- */
 
     /**
@@ -252,9 +277,9 @@ typedef struct
     /**
      * Packed collection buffer (LSB-first within each byte, air order).
      * Holds the FEC-encoded header bits followed by payload bits.
-     * Sized to hold BREDR_SYMBOLS_MAX bits.
+    * Sized to hold BREDR_BODY_BITS_MAX bits.
      */
-    uint8_t  raw_symbols[(BREDR_SYMBOLS_MAX + 7u) / 8u];
+    uint8_t  raw_symbols[(BREDR_BODY_BITS_MAX + 7u) / 8u];
 
     /** Bits packed into raw_symbols so far. */
     unsigned int bits_collected;
@@ -275,6 +300,9 @@ typedef struct
 
     /** AC bit errors for the current match. */
     uint8_t  detected_ac_errors;
+
+    /** Absolute bit index of the current packet's access-code start. */
+    uint64_t detected_packet_start_bit;
 
     /**
      * Last transmitted bit of the matched sync word (bit 63 of sw_window).
@@ -363,9 +391,9 @@ uint8_t        bredr_compute_hec(uint16_t data, uint8_t uap);
 /**
  * @brief Return the maximum on-air payload bits for a given TYPE code.
  *
- * This is the number of bits the PHY targets when collecting a packet of
- * the given type — including FEC overhead where applicable.  The TYPE code
- * is the raw 4-bit field value (0–15) as it appears in the packet header.
+ * This is the number of on-air payload bits for a decoded packet type,
+ * including FEC overhead where applicable. PHY collection should not use it
+ * to size capture until header dewhitening has been done with a known CLK1-6.
  *
  * @param type_code  4-bit packet TYPE (0–15).
  * @return           On-air payload bits, or 0 for NULL/POLL.

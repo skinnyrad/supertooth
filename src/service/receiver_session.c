@@ -33,6 +33,7 @@ void receiver_fill_bredr_piconet_snapshot(const bredr_piconet_t *pnet,
     out->uap = pnet->uap;
     out->clk_known = pnet->clk_known;
     out->central_clk_1_6 = pnet->central_clk_1_6;
+    out->last_successful_rx_clk_1600 = pnet->last_successful_rx_clk_1600;
     out->tracking_state = pnet->tracking_state;
     out->total_packets = pnet->total_packets;
     out->combined_rssi_seen = pnet->combined_rssi_seen;

@@ -81,7 +81,7 @@ static void print_packet_full(unsigned long packet_no,
     printf("Frequency    : %u MHz (Channel %u)\n",
            (unsigned int)(meta->center_frequency_hz / 1000000u), meta->channel_index);
     printf("RSSI         : %.2f dBr\n", meta->rssi_dbr);
-    bredr_print_packet_details(frame, pnet);
+    bredr_print_packet_details(frame, pnet, meta, current_master_clock_mhz() * 1000000u);
 
     printf("--------------------------------------------------\n");
 }
