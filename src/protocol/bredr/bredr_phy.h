@@ -138,6 +138,13 @@ extern "C"
  */
 #define BREDR_AC_SAMPLES (BREDR_AC_BITS * 2u)
 
+/**
+ * Number of decimated IQ samples available when the access code is detected.
+ * Detection completes on the preamble+sync portion (68 bits) before the
+ * 4-bit trailer is drained.
+ */
+#define BREDR_AC_DETECT_SAMPLES (68u * 2u)
+
 /* ---------------------------------------------------------------------------
  * bredr_frame_t — a captured BR/EDR PHY frame
  * ---------------------------------------------------------------------------*/

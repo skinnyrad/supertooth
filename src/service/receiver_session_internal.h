@@ -37,6 +37,13 @@ typedef struct
     bredr_processor_t proc;
     float complex mixed[RECEIVER_BREDR_BUFFER_SIZE];
     float complex decimated[RECEIVER_BREDR_BUFFER_SIZE];
+    windowcf rssi_history;
+    unsigned int rssi_history_capacity;
+    unsigned int rssi_history_valid;
+    uint64_t rssi_history_next_sample;
+    float pending_rssi_dbr;
+    int pending_rssi_valid;
+    bredr_status_t prev_status;
     unsigned int block_idx_ring[RECEIVER_BREDR_CHANNEL_RING_SIZE];
     unsigned int block_write_idx;
     unsigned int block_read_idx;

@@ -177,9 +177,13 @@ void bredr_piconet_add_packet(bredr_piconet_t *pnet,
     if (!hec_ok || isnan(meta->rssi_dbr))
         return;
 
-    /* rx_clk_1600 is slot clock (CLKN >> 1), so bit0 == CLK1 parity.
-     * Master transmits when CLK1 == 0, slave when CLK1 == 1. */
-    if ((rx_clk_1600 & 1u) == 0u)
+    uint8_t packet_clk6 = pnet->central_clk_1_6;
+
+    /* Direction comes from the recovered central clock for this packet.
+     * The local receive timeline is only used to recover that clock, not to
+     * classify packet role directly. Master transmits when CLK1 == 0 and
+     * slave transmits when CLK1 == 1. */
+    if ((packet_clk6 & 1u) == 0u)
     {
         pnet->master_rssi =
             update_rssi_value(pnet->master_rssi, pnet->master_rssi_seen, meta->rssi_dbr,
@@ -189,7 +193,7 @@ void bredr_piconet_add_packet(bredr_piconet_t *pnet,
     else
     {
         uint8_t bits[18];
-        bredr_decode_header_bits(frame, pnet->central_clk_1_6, bits);
+        bredr_decode_header_bits(frame, packet_clk6, bits);
         uint8_t lt = (bits[0]) | (uint8_t)(bits[1] << 1) | (uint8_t)(bits[2] << 2);
         pnet->slave_rssi[lt] =
             update_rssi_value(pnet->slave_rssi[lt], pnet->slave_rssi_seen[lt], meta->rssi_dbr,
