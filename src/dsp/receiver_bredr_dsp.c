@@ -88,16 +88,8 @@ int receiver_bredr_setup_channel_ctx(receiver_session_t *session)
 
         nco_crcf_set_frequency(ctx->nco, normalized_freq);
         bredr_processor_init(&ctx->proc, BREDR_AC_ERRORS_DEFAULT);
-        if (pthread_mutex_init(&ctx->queue_mutex, NULL) != 0)
+        if (sample_reader_init(&ctx->reader, &session->sample_dispatcher) != 0)
             return -1;
-        ctx->queue_mutex_initialized = 1;
-        if (pthread_cond_init(&ctx->queue_cv, NULL) != 0)
-        {
-            pthread_mutex_destroy(&ctx->queue_mutex);
-            ctx->queue_mutex_initialized = 0;
-            return -1;
-        }
-        ctx->queue_cv_initialized = 1;
     }
 
     return 0;
@@ -128,21 +120,12 @@ void receiver_bredr_destroy_channel_ctx(receiver_session_t *session)
             nco_crcf_destroy(ctx->nco);
             ctx->nco = NULL;
         }
-        if (ctx->queue_cv_initialized)
-        {
-            pthread_cond_destroy(&ctx->queue_cv);
-            ctx->queue_cv_initialized = 0;
-        }
-        if (ctx->queue_mutex_initialized)
-        {
-            pthread_mutex_destroy(&ctx->queue_mutex);
-            ctx->queue_mutex_initialized = 0;
-        }
+        sample_reader_destroy(&ctx->reader);
     }
 }
 
 void receiver_bredr_process_channel(receiver_bredr_channel_ctx_t *ctx,
-                                    receiver_bredr_block_t *blk)
+                                    sample_block_t *blk)
 {
     receiver_session_t *session = ctx->session;
     uint64_t block_start_bit_index = ctx->proc.total_bits_seen;
@@ -262,33 +245,6 @@ void receiver_bredr_process_channel(receiver_bredr_channel_ctx_t *ctx,
     __atomic_add_fetch(&session->bredr_total_bits, local_bits, __ATOMIC_RELAXED);
 }
 
-void receiver_dispatch_block_to_bredr_channels(receiver_session_t *session,
-                                               unsigned int block_idx)
-{
-    for (unsigned int ch = 0; ch < session->bredr_config.channel_count; ch++)
-    {
-        receiver_bredr_channel_ctx_t *ctx = &session->bredr_ctx[ch];
-        pthread_mutex_lock(&ctx->queue_mutex);
-        if (ctx->block_count == RECEIVER_BREDR_CHANNEL_RING_SIZE)
-        {
-            unsigned int old_idx = ctx->block_idx_ring[ctx->block_read_idx];
-            ctx->block_read_idx = (ctx->block_read_idx + 1u) % RECEIVER_BREDR_CHANNEL_RING_SIZE;
-            ctx->block_count--;
-            ctx->dropped_blocks++;
-            if (session->debug)
-                fprintf(stderr, "[debug] ch=%02u queue full (%u), dropping oldest (total=%lu)\n",
-                        ctx->bredr_channel, RECEIVER_BREDR_CHANNEL_RING_SIZE, ctx->dropped_blocks);
-            __atomic_sub_fetch(&session->bredr_block_pool[old_idx].refcount, 1u, __ATOMIC_ACQ_REL);
-        }
-        ctx->block_idx_ring[ctx->block_write_idx] = block_idx;
-        ctx->block_write_idx = (ctx->block_write_idx + 1u) % RECEIVER_BREDR_CHANNEL_RING_SIZE;
-        ctx->block_count++;
-        __atomic_add_fetch(&session->bredr_block_pool[block_idx].refcount, 1u, __ATOMIC_ACQ_REL);
-        pthread_cond_signal(&ctx->queue_cv);
-        pthread_mutex_unlock(&ctx->queue_mutex);
-    }
-}
-
 int receiver_bredr_rx_cb(hackrf_transfer *transfer)
 {
     receiver_session_t *session = (receiver_session_t *)transfer->rx_ctx;
@@ -303,35 +259,25 @@ int receiver_bredr_rx_cb(hackrf_transfer *transfer)
     unsigned long long block_base = session->bredr_samples_received;
     session->bredr_samples_received += num_samples;
 
-    int block_idx = -1;
-    for (unsigned int i = 0; i < RECEIVER_BREDR_BLOCK_POOL_SIZE; i++)
-    {
-        unsigned int idx = (session->bredr_pool_write_idx + i) % RECEIVER_BREDR_BLOCK_POOL_SIZE;
-        if (__atomic_load_n(&session->bredr_block_pool[idx].refcount, __ATOMIC_ACQUIRE) == 0u)
-        {
-            block_idx = (int)idx;
-            break;
-        }
-    }
-    if (block_idx < 0)
+    sample_block_t *blk = sample_dispatcher_acquire_block(&session->sample_dispatcher);
+    if (!blk)
     {
         session->bredr_dropped_blocks++;
         if (session->debug)
             fprintf(stderr, "[debug] dropped callback block: block pool exhausted (%u)\n",
-                    RECEIVER_BREDR_BLOCK_POOL_SIZE);
+                    SAMPLE_DISPATCHER_BLOCK_CAPACITY);
         return session->stop_requested ? -1 : 0;
     }
 
-    receiver_bredr_block_t *blk = &session->bredr_block_pool[(unsigned int)block_idx];
     blk->num_samples = num_samples;
     blk->block_base_sample = block_base;
 
     for (unsigned int i = 0; i < num_samples; i++)
         blk->samples[i] = hackrf_iq_to_complex(samples, i);
 
-    session->bredr_pool_write_idx = ((unsigned int)block_idx + 1u) % RECEIVER_BREDR_BLOCK_POOL_SIZE;
     __atomic_thread_fence(__ATOMIC_RELEASE);
-    receiver_dispatch_block_to_bredr_channels(session, (unsigned int)block_idx);
+    sample_dispatcher_push_block(&session->sample_dispatcher, blk);
+    sample_block_release(blk);
 
     return session->stop_requested ? -1 : 0;
 }

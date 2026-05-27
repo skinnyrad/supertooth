@@ -50,7 +50,6 @@ void receiver_bredr_session_init(receiver_session_t *session,
 {
     memset(&session->bredr_store, 0, sizeof(session->bredr_store));
     memset(session->bredr_ctx, 0, RECEIVER_BREDR_MAX_CHANNELS * sizeof(*session->bredr_ctx));
-    memset(session->bredr_block_pool, 0, RECEIVER_BREDR_BLOCK_POOL_SIZE * sizeof(*session->bredr_block_pool));
     session->stop_requested = 0;
     session->debug = config->debug;
     session->bredr_config = *config;
@@ -58,12 +57,12 @@ void receiver_bredr_session_init(receiver_session_t *session,
     session->bredr_worker_count = 0u;
     session->bredr_samples_received = 0ULL;
     session->bredr_shutdown_requested = 0u;
-    session->bredr_pool_write_idx = 0u;
     session->bredr_dropped_blocks = 0ul;
     session->bredr_total_bits = 0ULL;
     session->bredr_total_packets = 0ul;
     session->bredr_header_packets = 0ul;
     session->bredr_id_packets = 0ul;
+    sample_dispatcher_reset(&session->sample_dispatcher);
     if (callbacks)
         session->bredr_callbacks = *callbacks;
     else
@@ -89,10 +88,14 @@ receiver_session_t *receiver_session_create(void)
     session->raw = (float complex *)calloc(RECEIVER_BLE_BUFFER_SIZE / 2u, sizeof(*session->raw));
     session->bredr_ctx = (receiver_bredr_channel_ctx_t *)calloc(RECEIVER_BREDR_MAX_CHANNELS,
                                                                 sizeof(*session->bredr_ctx));
-    session->bredr_block_pool = (receiver_bredr_block_t *)calloc(RECEIVER_BREDR_BLOCK_POOL_SIZE,
-                                                                  sizeof(*session->bredr_block_pool));
     session->hybrid_ble_ctx = (receiver_hybrid_ble_ctx_t *)calloc(1, sizeof(*session->hybrid_ble_ctx));
-    if (!session->raw || !session->bredr_ctx || !session->bredr_block_pool || !session->hybrid_ble_ctx)
+    if (!session->raw || !session->bredr_ctx || !session->hybrid_ble_ctx)
+    {
+        receiver_session_destroy(session);
+        return NULL;
+    }
+
+    if (sample_dispatcher_init(&session->sample_dispatcher) != 0)
     {
         receiver_session_destroy(session);
         return NULL;
@@ -109,7 +112,7 @@ void receiver_session_destroy(receiver_session_t *session)
         pthread_mutex_destroy(&session->stop_mutex);
         pthread_mutex_destroy(&session->decoded_packet_mutex);
         free(session->hybrid_ble_ctx);
-        free(session->bredr_block_pool);
+        sample_dispatcher_destroy(&session->sample_dispatcher);
         free(session->bredr_ctx);
         free(session->raw);
     }

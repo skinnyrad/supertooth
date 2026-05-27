@@ -178,6 +178,8 @@ if(UNIX AND NOT APPLE)
 endif()
 
 add_library(supertooth_service STATIC
+    service/sample_dispatcher.c
+    service/sample_dispatcher.h
     service/receiver_session.c
     service/receiver_session.h
     service/receiver_session_internal.h

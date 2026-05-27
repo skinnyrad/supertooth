@@ -21,16 +21,8 @@ int receiver_hybrid_setup_ble(receiver_session_t *session)
     ble_processor_init(&ble->ble_proc, BLE_CH37_INDEX);
     ble->prev_status = BLE_SEARCHING;
     ble->pkt_start_decimated = -1;
-    if (pthread_mutex_init(&ble->queue_mutex, NULL) != 0)
+    if (sample_reader_init(&ble->reader, &session->sample_dispatcher) != 0)
         return -1;
-    ble->queue_mutex_initialized = 1;
-    if (pthread_cond_init(&ble->queue_cv, NULL) != 0)
-    {
-        pthread_mutex_destroy(&ble->queue_mutex);
-        ble->queue_mutex_initialized = 0;
-        return -1;
-    }
-    ble->queue_cv_initialized = 1;
     return 0;
 }
 
@@ -40,21 +32,12 @@ void receiver_hybrid_destroy_ble(receiver_session_t *session)
     if (ble->demod) cpfskdem_destroy(ble->demod);
     if (ble->firdec) firdecim_crcf_destroy(ble->firdec);
     if (ble->nco) nco_crcf_destroy(ble->nco);
-    if (ble->queue_cv_initialized)
-    {
-        pthread_cond_destroy(&ble->queue_cv);
-        ble->queue_cv_initialized = 0;
-    }
-    if (ble->queue_mutex_initialized)
-    {
-        pthread_mutex_destroy(&ble->queue_mutex);
-        ble->queue_mutex_initialized = 0;
-    }
+    sample_reader_destroy(&ble->reader);
     ble->demod = NULL; ble->firdec = NULL; ble->nco = NULL;
 }
 
 void receiver_hybrid_process_ble(receiver_hybrid_ble_ctx_t *ble,
-                                 receiver_bredr_block_t *blk)
+                                 sample_block_t *blk)
 {
     receiver_session_t *session = ble->session;
     nco_crcf_mix_block_down(ble->nco, blk->samples, ble->mixed, blk->num_samples);
@@ -115,49 +98,28 @@ int receiver_hybrid_cb(hackrf_transfer *transfer)
     receiver_session_t *session = (receiver_session_t *)transfer->rx_ctx;
     if (!session || session->stop_requested)
         return -1;
+
     unsigned int num_samples = (unsigned int)(transfer->valid_length / 2u);
     if (num_samples > RECEIVER_BREDR_BUFFER_SIZE)
         num_samples = RECEIVER_BREDR_BUFFER_SIZE;
-    int block_idx = -1;
-    for (unsigned int i = 0; i < RECEIVER_BREDR_BLOCK_POOL_SIZE; i++)
-    {
-        unsigned int idx = (session->bredr_pool_write_idx + i) % RECEIVER_BREDR_BLOCK_POOL_SIZE;
-        if (__atomic_load_n(&session->bredr_block_pool[idx].refcount, __ATOMIC_ACQUIRE) == 0u)
-        {
-            block_idx = (int)idx;
-            break;
-        }
-    }
-    if (block_idx < 0)
+
+    sample_block_t *blk = sample_dispatcher_acquire_block(&session->sample_dispatcher);
+    if (!blk)
     {
         session->hybrid_dropped_blocks++;
         return 0;
     }
-    receiver_bredr_block_t *blk = &session->bredr_block_pool[(unsigned int)block_idx];
+
     blk->num_samples = num_samples;
     blk->block_base_sample = session->bredr_samples_received;
     session->bredr_samples_received += num_samples;
+
     int8_t *samples = (int8_t *)transfer->buffer;
     for (unsigned int i = 0; i < num_samples; i++)
         blk->samples[i] = hackrf_iq_to_complex(samples, i);
-    session->bredr_pool_write_idx = ((unsigned int)block_idx + 1u) % RECEIVER_BREDR_BLOCK_POOL_SIZE;
+
     __atomic_thread_fence(__ATOMIC_RELEASE);
-    receiver_dispatch_block_to_bredr_channels(session, (unsigned int)block_idx);
-    receiver_hybrid_ble_ctx_t *ble = session->hybrid_ble_ctx;
-    pthread_mutex_lock(&ble->queue_mutex);
-    if (ble->block_count == RECEIVER_BREDR_CHANNEL_RING_SIZE)
-    {
-        unsigned int old_idx = ble->block_idx_ring[ble->block_read_idx];
-        ble->block_read_idx = (ble->block_read_idx + 1u) % RECEIVER_BREDR_CHANNEL_RING_SIZE;
-        ble->block_count--;
-        ble->dropped_blocks++;
-        __atomic_sub_fetch(&session->bredr_block_pool[old_idx].refcount, 1u, __ATOMIC_ACQ_REL);
-    }
-    ble->block_idx_ring[ble->block_write_idx] = (unsigned int)block_idx;
-    ble->block_write_idx = (ble->block_write_idx + 1u) % RECEIVER_BREDR_CHANNEL_RING_SIZE;
-    ble->block_count++;
-    __atomic_add_fetch(&session->bredr_block_pool[(unsigned int)block_idx].refcount, 1u, __ATOMIC_ACQ_REL);
-    pthread_cond_signal(&ble->queue_cv);
-    pthread_mutex_unlock(&ble->queue_mutex);
+    sample_dispatcher_push_block(&session->sample_dispatcher, blk);
+    sample_block_release(blk);
     return 0;
 }

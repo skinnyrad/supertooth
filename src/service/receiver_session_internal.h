@@ -9,6 +9,7 @@
 
 #include <liquid/liquid.h>
 
+#include "sample_dispatcher.h"
 #include "hackrf.h"
 #include "bredr_piconet.h"
 #include "bredr_piconet_store.h"
@@ -22,7 +23,7 @@
 #define RECEIVER_BREDR_LNA_GAIN 24u
 #define RECEIVER_BREDR_VGA_GAIN 18u
 #define RECEIVER_BREDR_SYMBOL_STEP 2u
-#define RECEIVER_BREDR_BUFFER_SIZE 262144u
+#define RECEIVER_BREDR_BUFFER_SIZE SAMPLE_BLOCK_SAMPLE_CAPACITY
 
 #define RECEIVER_HYBRID_DECIMATION 10u
 #define RECEIVER_HYBRID_BLE_FREQ_OFFSET_HZ (-9500000.0f)
@@ -44,25 +45,9 @@ typedef struct
     float pending_rssi_dbr;
     int pending_rssi_valid;
     bredr_status_t prev_status;
-    unsigned int block_idx_ring[RECEIVER_BREDR_CHANNEL_RING_SIZE];
-    unsigned int block_write_idx;
-    unsigned int block_read_idx;
-    unsigned int block_count;
-    unsigned long dropped_blocks;
-    pthread_mutex_t queue_mutex;
-    pthread_cond_t queue_cv;
-    int queue_mutex_initialized;
-    int queue_cv_initialized;
+    sample_reader_t reader;
     struct receiver_session *session;
 } receiver_bredr_channel_ctx_t;
-
-typedef struct
-{
-    float complex samples[RECEIVER_BREDR_BUFFER_SIZE];
-    unsigned int num_samples;
-    unsigned long long block_base_sample;
-    unsigned int refcount;
-} receiver_bredr_block_t;
 
 typedef struct
 {
@@ -74,15 +59,7 @@ typedef struct
     ble_channel_processor_t ble_proc;
     ble_status_t prev_status;
     long long pkt_start_decimated;
-    unsigned int block_idx_ring[RECEIVER_BREDR_CHANNEL_RING_SIZE];
-    unsigned int block_write_idx;
-    unsigned int block_read_idx;
-    unsigned int block_count;
-    unsigned long dropped_blocks;
-    pthread_mutex_t queue_mutex;
-    pthread_cond_t queue_cv;
-    int queue_mutex_initialized;
-    int queue_cv_initialized;
+    sample_reader_t reader;
     struct receiver_session *session;
 } receiver_hybrid_ble_ctx_t;
 
@@ -110,7 +87,7 @@ struct receiver_session
     receiver_bredr_callbacks_t bredr_callbacks;
     bredr_piconet_store_t bredr_store;
     receiver_bredr_channel_ctx_t *bredr_ctx;
-    receiver_bredr_block_t *bredr_block_pool;
+    sample_dispatcher_t sample_dispatcher;
     pthread_t *bredr_worker_threads;
     unsigned int bredr_worker_count;
     unsigned int bredr_sample_rate;
@@ -119,7 +96,6 @@ struct receiver_session
     uint64_t bredr_lo_freq_hz;
     unsigned long long bredr_samples_received;
     unsigned int bredr_shutdown_requested;
-    unsigned int bredr_pool_write_idx;
     unsigned long bredr_dropped_blocks;
     unsigned long long bredr_total_bits;
     unsigned long bredr_total_packets;
