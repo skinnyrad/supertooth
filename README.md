@@ -105,33 +105,34 @@ Supertooth is organized as a layered core library with thin CLI entrypoints.
 src/
   apps/            CLI binaries and presentation
   service/         session API and runtime orchestration
-  dsp/             channelization, demodulation, sample-processing callbacks
+  dsp/             shared DSP utilities (RSSI measurement helpers)
   radio/           HackRF integration
   models/          shared packet and receive metadata types
   protocol/
-    ble/           BLE framing, codec helpers, assigned-number helpers
-    bredr/         BR/EDR framing, codec helpers, tracking, recovery
+    ble/           BLE bitstream decoder, codec helpers, assigned-number helpers
+    bredr/         BR/EDR bitstream decoder, codec helpers, tracking, recovery
 ```
 
 ### Main layers
 
 - `src/apps/`: `supertooth-rx`, `supertooth-ble`, and `supertooth-hybrid` user-facing binaries.
 - `src/service/`: reusable library boundary built around `receiver_session`.
-- `src/dsp/`: mode-specific DSP implementations extracted from session orchestration.
+- `src/service/*_channel_processor.*`: per-mode sample processing, demodulation flow, and callback emission.
+- `src/dsp/`: shared DSP helper utilities (currently RSSI measurement primitives).
 - `src/radio/`: HackRF lifecycle and configuration wrapper.
 - `src/models/`: shared receive-event wrappers such as `ble_event_t`, `bredr_event_t`, and `rx_metadata_t`.
-- `src/protocol/ble/`: BLE framing and decode support.
-- `src/protocol/bredr/`: BR/EDR framing, measurement, tracking, and recovery support.
+- `src/protocol/ble/`: BLE bitstream decoding and decode support.
+- `src/protocol/bredr/`: BR/EDR bitstream decoding, measurement, tracking, and recovery support.
 
 ### Frame And Packet Split
 
 The protocol pipeline now separates captured frames from decoded packets:
 
-- BLE PHY/framing produces `ble_frame_t`.
+- BLE bitstream decoder (`ble_bitstream_decoder.*`) produces `ble_frame_t`.
 - BLE codec owns the clean decoded `ble_packet_t` model and `ble_decode_frame()`.
 - Service callbacks carry `ble_event_t`, which pairs `rx_metadata_t` with a captured `ble_frame_t`.
-- BR/EDR follows the same high-level shape with `bredr_event_t` carrying `bredr_frame_t`.
+- BR/EDR bitstream decoder (`bredr_bitstream_decoder.*`) follows the same high-level shape with `bredr_event_t` carrying `bredr_frame_t`.
 
-This keeps capture-stage data in the PHY layer, decoded semantic packet fields in the codec layer, and display formatting in the BLE display layer.
+This keeps capture-stage data in the bitstream decoder layer, decoded semantic packet fields in the codec layer, and display formatting in the display layer.
 
 For a broader description of the current architecture, see `docs/architecture.md`.

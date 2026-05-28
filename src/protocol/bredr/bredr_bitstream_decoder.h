@@ -1,26 +1,26 @@
 /**
- * @file bredr_phy.h
+ * @file bredr_bitstream_decoder.h
  * @brief BR/EDR PHY-layer bitstream processor — real-time, push-bit API.
  *
  * Overview
  * --------
  * This module detects and captures BR/EDR (Classic Bluetooth) packets from a
  * raw 1-Mbps GFSK bitstream, one bit at a time.  The design mirrors the
- * `ble_phy` API: all decoder state lives inside a `bredr_processor_t` object
+ * `ble_phy` API: all decoder state lives inside a `bredr_bitstream_decoder_t` object
  * that the caller allocates and passes to every function, making it safe to
  * use from an SDR RX callback without global variables.
  *
  * Typical usage
  * -------------
  * @code
- *   bredr_processor_t proc;
- *   bredr_processor_init(&proc, BREDR_AC_ERRORS_DEFAULT);
+ *   bredr_bitstream_decoder_t proc;
+ *   bredr_bitstream_decoder_init(&proc, BREDR_AC_ERRORS_DEFAULT);
  *
  *   // For every demodulated bit from the 1-Mbps channel:
- *   bredr_status_t s = bredr_push_bit(&proc, bit);
+ *   bredr_status_t s = bredr_bitstream_decoder_push_bit(&proc, bit);
  *   if (s == BREDR_VALID_PACKET) {
  *       bredr_frame_t frame;
- *       bredr_get_frame(&proc, &frame);
+ *       bredr_bitstream_decoder_get_frame(&proc, &frame);
  *       // Use frame ...
  *   }
  * @endcode
@@ -55,7 +55,7 @@
  *
  * Thread safety
  * -------------
- * A single `bredr_processor_t` is NOT thread-safe.  Use one processor per
+ * A single `bredr_bitstream_decoder_t` is NOT thread-safe.  Use one processor per
  * thread/channel, or protect with a mutex.
  *
  * Bluetooth Core Specification references
@@ -66,8 +66,8 @@
  * - Vol 2, Part B, §8    — Packet types and payload lengths
  */
 
-#ifndef BREDR_PHY_H
-#define BREDR_PHY_H
+#ifndef BREDR_BITSTREAM_DECODER_H
+#define BREDR_BITSTREAM_DECODER_H
 
 #include <stdint.h>
 #include <complex.h>
@@ -205,11 +205,11 @@ static inline unsigned int bredr_frame_payload_bytes(const bredr_frame_t *frame)
 }
 
 /* ---------------------------------------------------------------------------
- * bredr_status_t — return codes for bredr_push_bit()
+ * bredr_status_t — return codes for bredr_bitstream_decoder_push_bit()
  * ---------------------------------------------------------------------------*/
 
 /**
- * @brief Status codes returned by `bredr_push_bit()`.
+ * @brief Status codes returned by `bredr_bitstream_decoder_push_bit()`.
  *
  * Callers should treat any negative value as an error so that future error
  * codes can be added without breaking existing switch statements.
@@ -224,7 +224,7 @@ typedef enum
 
     /**
      * Access code confirmed; the processor is collecting header/payload bits.
-     * Keep calling `bredr_push_bit()` — no action required from the caller.
+     * Keep calling `bredr_bitstream_decoder_push_bit()` — no action required from the caller.
      */
     BREDR_COLLECTING   =  1,
 
@@ -237,7 +237,7 @@ typedef enum
 } bredr_status_t;
 
 /* ---------------------------------------------------------------------------
- * bredr_processor_t — per-channel decoder state
+ * bredr_bitstream_decoder_t — per-channel decoder state
  * ---------------------------------------------------------------------------*/
 
 /**
@@ -333,7 +333,7 @@ typedef struct
     /** Non-zero when last_packet holds an unread valid packet. */
     int            packet_ready;
 
-} bredr_processor_t;
+} bredr_bitstream_decoder_t;
 
 /* ---------------------------------------------------------------------------
  * API
@@ -342,7 +342,7 @@ typedef struct
 /**
  * @brief Initialise a channel processor.
  *
- * Must be called before the first `bredr_push_bit()` on this processor.
+ * Must be called before the first `bredr_bitstream_decoder_push_bit()` on this processor.
  * Safe to call again at any time to reset all state.
  *
  * @param proc           Pointer to the processor.  Must not be NULL.
@@ -350,7 +350,7 @@ typedef struct
  *                       match.  Use BREDR_AC_ERRORS_DEFAULT (2) for
  *                       normal operation, 0 for strict matching only.
  */
-void           bredr_processor_init(bredr_processor_t *proc,
+void           bredr_bitstream_decoder_init(bredr_bitstream_decoder_t *proc,
                                     uint8_t max_ac_errors);
 
 /**
@@ -367,7 +367,7 @@ void           bredr_processor_init(bredr_processor_t *proc,
  *          `BREDR_SEARCHING` when scanning for the next AC, or
  *          `BREDR_ERROR` on invalid input.
  */
-bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit);
+bredr_status_t bredr_bitstream_decoder_push_bit(bredr_bitstream_decoder_t *proc, uint8_t bit);
 
 /**
  * @brief Retrieve the last captured packet.
@@ -380,7 +380,7 @@ bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit);
  *
  * @return  0 on success, -1 if no valid packet is available.
  */
-int            bredr_get_frame(bredr_processor_t *proc, bredr_frame_t *out);
+int            bredr_bitstream_decoder_get_frame(bredr_bitstream_decoder_t *proc, bredr_frame_t *out);
 
 /**
  * @brief Compute the 8-bit HEC for a 10-bit header value and a known UAP.
@@ -411,4 +411,4 @@ unsigned int   bredr_on_air_payload_bits(uint8_t type_code);
 }
 #endif
 
-#endif /* BREDR_PHY_H */
+#endif /* BREDR_BITSTREAM_DECODER_H */

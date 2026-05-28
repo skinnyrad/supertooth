@@ -1,4 +1,4 @@
-#include "receiver_dsp.h"
+#include "bredr_channel_processor.h"
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -81,9 +81,9 @@ receiver_session_t *receiver_session_create(void)
     pthread_mutex_init(&session->stop_mutex, NULL);
     pthread_cond_init(&session->stop_cv, NULL);
 
-    session->ble_ctx = (receiver_ble_ctx_t *)calloc(1, sizeof(*session->ble_ctx));
-    session->bredr_ctx = (receiver_bredr_channel_ctx_t *)calloc(RECEIVER_BREDR_MAX_CHANNELS,
-                                                                sizeof(*session->bredr_ctx));
+    session->ble_ctx = (ble_channel_processor_t *)calloc(1, sizeof(*session->ble_ctx));
+    session->bredr_ctx = (bredr_channel_processor_t *)calloc(RECEIVER_BREDR_MAX_CHANNELS,
+                                                             sizeof(*session->bredr_ctx));
     if (!session->ble_ctx || !session->bredr_ctx)
     {
         receiver_session_destroy(session);

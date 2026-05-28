@@ -1,4 +1,5 @@
-#include "receiver_dsp.h"
+#include "ble_channel_processor.h"
+#include "bredr_channel_processor.h"
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -7,7 +8,7 @@
 
 static void *receiver_hybrid_bredr_worker(void *arg)
 {
-    receiver_bredr_channel_ctx_t *ctx = (receiver_bredr_channel_ctx_t *)arg;
+    bredr_channel_processor_t *ctx = (bredr_channel_processor_t *)arg;
     receiver_session_t *session = ctx->session;
     for (;;)
     {
@@ -16,7 +17,7 @@ static void *receiver_hybrid_bredr_worker(void *arg)
                                    &session->hybrid_shutdown_requested,
                                    &block) != 0)
             break;
-        receiver_bredr_process_channel(ctx, block);
+        receiver_bredr_channel_processor_process(ctx, block);
         sample_block_release(block);
     }
     return NULL;
@@ -24,7 +25,7 @@ static void *receiver_hybrid_bredr_worker(void *arg)
 
 static void *receiver_hybrid_ble_worker(void *arg)
 {
-    receiver_ble_ctx_t *ble = (receiver_ble_ctx_t *)arg;
+    ble_channel_processor_t *ble = (ble_channel_processor_t *)arg;
     receiver_session_t *session = ble->session;
     for (;;)
     {
@@ -33,7 +34,7 @@ static void *receiver_hybrid_ble_worker(void *arg)
                                    &session->hybrid_shutdown_requested,
                                    &block) != 0)
             break;
-        receiver_ble_process_block(ble, block);
+        receiver_ble_channel_processor_process(ble, block);
         sample_block_release(block);
     }
     return NULL;
@@ -134,16 +135,16 @@ int receiver_session_run_hybrid(receiver_session_t *session,
     else
         memset(&session->hybrid_callbacks, 0, sizeof(session->hybrid_callbacks));
     receiver_bredr_session_init(session, &bredr_config, &bredr_callbacks);
-    if (receiver_bredr_setup_channel_ctx(session) != 0)
+    if (receiver_bredr_channel_processor_setup(session) != 0)
     {
         bredr_piconet_store_free(&session->bredr_store);
-        receiver_bredr_destroy_channel_ctx(session);
+        receiver_bredr_channel_processor_destroy(session);
         return -1;
     }
-    if (receiver_ble_setup(session, RECEIVER_BLE_PIPELINE_HYBRID) != 0)
+    if (receiver_ble_channel_processor_setup(session, RECEIVER_BLE_PIPELINE_HYBRID) != 0)
     {
-        receiver_ble_destroy(session);
-        receiver_bredr_destroy_channel_ctx(session);
+        receiver_ble_channel_processor_destroy(session);
+        receiver_bredr_channel_processor_destroy(session);
         bredr_piconet_store_free(&session->bredr_store);
         return -1;
     }
@@ -152,8 +153,8 @@ int receiver_session_run_hybrid(receiver_session_t *session,
     {
         if (session->hybrid_worker_threads)
             receiver_hybrid_stop_thread_pool(session);
-        receiver_ble_destroy(session);
-        receiver_bredr_destroy_channel_ctx(session);
+        receiver_ble_channel_processor_destroy(session);
+        receiver_bredr_channel_processor_destroy(session);
         bredr_piconet_store_free(&session->bredr_store);
         return -1;
     }
@@ -202,8 +203,8 @@ int receiver_session_run_hybrid(receiver_session_t *session,
         stats_out->bredr_channel_count = RECEIVER_BREDR_MAX_CHANNELS;
     }
 
-    receiver_ble_destroy(session);
-    receiver_bredr_destroy_channel_ctx(session);
+    receiver_ble_channel_processor_destroy(session);
+    receiver_bredr_channel_processor_destroy(session);
     bredr_piconet_store_free(&session->bredr_store);
     return result;
 }

@@ -1,10 +1,10 @@
-#include "receiver_dsp.h"
+#include "ble_channel_processor.h"
 #include "rssi_measurements.h"
 
 #include <math.h>
 #include <string.h>
 
-static void receiver_ble_emit_event(receiver_ble_ctx_t *ble,
+static void receiver_ble_emit_event(ble_channel_processor_t *ble,
                                     const ble_event_t *event)
 {
     receiver_session_t *session = ble->session;
@@ -27,13 +27,13 @@ static void receiver_ble_emit_event(receiver_ble_ctx_t *ble,
         session->ble_callbacks.on_packet(event, session->ble_callbacks.user);
 }
 
-int receiver_ble_setup(receiver_session_t *session,
-                       receiver_ble_pipeline_t pipeline)
+int receiver_ble_channel_processor_setup(receiver_session_t *session,
+                                        receiver_ble_pipeline_t pipeline)
 {
     if (!session || !session->ble_ctx)
         return -1;
 
-    receiver_ble_ctx_t *ble = session->ble_ctx;
+    ble_channel_processor_t *ble = session->ble_ctx;
     memset(ble, 0, sizeof(*ble));
     ble->session = session;
     ble->pipeline = pipeline;
@@ -62,7 +62,7 @@ int receiver_ble_setup(receiver_session_t *session,
     if (!ble->demod)
         return -1;
 
-    ble_processor_init(&ble->proc, ble->channel_index);
+    ble_bitstream_decoder_init(&ble->proc, ble->channel_index);
     ble->prev_status = BLE_SEARCHING;
     ble->pkt_start_sample = -1;
     if (sample_reader_init(&ble->reader, &session->sample_dispatcher) != 0)
@@ -85,12 +85,12 @@ int receiver_ble_setup(receiver_session_t *session,
     return 0;
 }
 
-void receiver_ble_destroy(receiver_session_t *session)
+void receiver_ble_channel_processor_destroy(receiver_session_t *session)
 {
     if (!session || !session->ble_ctx)
         return;
 
-    receiver_ble_ctx_t *ble = session->ble_ctx;
+    ble_channel_processor_t *ble = session->ble_ctx;
     if (ble->demod)
     {
         cpfskdem_destroy(ble->demod);
@@ -110,8 +110,8 @@ void receiver_ble_destroy(receiver_session_t *session)
     memset(ble, 0, sizeof(*ble));
 }
 
-void receiver_ble_process_block(receiver_ble_ctx_t *ble,
-                                sample_block_t *blk)
+void receiver_ble_channel_processor_process(ble_channel_processor_t *ble,
+                                           sample_block_t *blk)
 {
     const float complex *samples = blk->samples;
     unsigned int sample_count = blk->num_samples;
@@ -132,7 +132,7 @@ void receiver_ble_process_block(receiver_ble_ctx_t *ble,
         unsigned int sample_index = s * RECEIVER_BLE_SAMPLES_PER_SYMBOL;
         unsigned int sym = cpfskdem_demodulate(ble->demod, &samples[sample_index]);
         uint8_t bit = (uint8_t)(sym & 0x01u);
-        ble_status_t status = ble_push_bit(&ble->proc, bit);
+        ble_status_t status = ble_bitstream_decoder_push_bit(&ble->proc, bit);
 
         if (ble->prev_status == BLE_SEARCHING && status == BLE_COLLECTING)
             ble->pkt_start_sample = (long long)(buf_start + sample_index);
@@ -153,7 +153,7 @@ void receiver_ble_process_block(receiver_ble_ctx_t *ble,
         }
 
         ble_frame_t frame;
-        if (ble_get_frame(&ble->proc, &frame) != 0)
+        if (ble_bitstream_decoder_get_frame(&ble->proc, &frame) != 0)
             continue;
 
         float rssi_dbr =

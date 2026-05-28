@@ -40,7 +40,7 @@ typedef struct
     nco_crcf nco;
     firdecim_crcf firdec;
     cpfskdem demod;
-    bredr_processor_t proc;
+    bredr_bitstream_decoder_t proc;
     float complex mixed[RECEIVER_BREDR_BUFFER_SIZE];
     float complex decimated[RECEIVER_BREDR_BUFFER_SIZE];
     windowcf rssi_history;
@@ -52,14 +52,14 @@ typedef struct
     bredr_status_t prev_status;
     sample_reader_t reader;
     struct receiver_session *session;
-} receiver_bredr_channel_ctx_t;
+} bredr_channel_processor_t;
 
 typedef struct
 {
     nco_crcf nco;
     firdecim_crcf firdec;
     cpfskdem demod;
-    ble_channel_processor_t proc;
+    ble_bitstream_decoder_t proc;
     float complex mixed[RECEIVER_BREDR_BUFFER_SIZE];
     float complex decimated[(unsigned int)(RECEIVER_BREDR_BUFFER_SIZE / RECEIVER_HYBRID_DECIMATION) + 1u];
     receiver_ble_pipeline_t pipeline;
@@ -71,7 +71,7 @@ typedef struct
     long long pkt_start_sample;
     sample_reader_t reader;
     struct receiver_session *session;
-} receiver_ble_ctx_t;
+} ble_channel_processor_t;
 
 struct receiver_session
 {
@@ -82,7 +82,7 @@ struct receiver_session
 
     receiver_ble_config_t ble_config;
     receiver_ble_callbacks_t ble_callbacks;
-    receiver_ble_ctx_t *ble_ctx;
+    ble_channel_processor_t *ble_ctx;
     pthread_t ble_worker_thread;
     unsigned int ble_worker_running;
     unsigned int ble_shutdown_requested;
@@ -90,7 +90,7 @@ struct receiver_session
     receiver_bredr_config_t bredr_config;
     receiver_bredr_callbacks_t bredr_callbacks;
     bredr_piconet_store_t bredr_store;
-    receiver_bredr_channel_ctx_t *bredr_ctx;
+    bredr_channel_processor_t *bredr_ctx;
     sample_dispatcher_t sample_dispatcher;
     pthread_t *bredr_worker_threads;
     unsigned int bredr_worker_count;

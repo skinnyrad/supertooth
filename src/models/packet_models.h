@@ -8,8 +8,8 @@
 
 #include <stdint.h>
 
-#include "ble_phy.h"
-#include "bredr_phy.h"
+#include "ble_bitstream_decoder.h"
+#include "bredr_bitstream_decoder.h"
 #include "rx_metadata.h"
 
 #ifdef __cplusplus

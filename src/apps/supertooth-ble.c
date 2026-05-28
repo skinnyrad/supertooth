@@ -6,7 +6,7 @@
 #include <inttypes.h>
 #include "app_common.h"
 #include "ble_display.h"
-#include "ble_phy.h"
+#include "ble_bitstream_decoder.h"
 #include "receiver_session.h"
 
 static unsigned long g_packet_count = 0;

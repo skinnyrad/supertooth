@@ -1,11 +1,21 @@
-#include "receiver_dsp.h"
+#include "bredr_channel_processor.h"
 #include "rssi_measurements.h"
 
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
 
-static float receiver_bredr_rssi_from_history(receiver_bredr_channel_ctx_t *ctx,
+/**
+ * @brief Convert a HackRF interleaved int8_t IQ sample to normalised float complex.
+ */
+static inline float complex hackrf_iq_to_complex(const int8_t *samples,
+                                                 unsigned int sample_index)
+{
+    return samples[2u * sample_index] / 128.0f +
+           (samples[2u * sample_index + 1u] / 128.0f) * _Complex_I;
+}
+
+static float receiver_bredr_rssi_from_history(bredr_channel_processor_t *ctx,
                                               uint64_t start_sample,
                                               uint64_t end_sample)
 {
@@ -53,14 +63,14 @@ void receiver_bredr_update_layout(receiver_session_t *session)
     session->bredr_lo_freq_hz = (uint64_t)llround(lowest_channel_freq_hz - lowest_ctx_freq_offset);
 }
 
-int receiver_bredr_setup_channel_ctx(receiver_session_t *session)
+int receiver_bredr_channel_processor_setup(receiver_session_t *session)
 {
     float lowest_ctx_freq_offset =
         -(session->bredr_config.channel_count / 2.0f - 0.5f) * (float)RECEIVER_BREDR_CHANNEL_BW;
 
     for (unsigned int i = 0; i < session->bredr_config.channel_count; i++)
     {
-        receiver_bredr_channel_ctx_t *ctx = &session->bredr_ctx[i];
+        bredr_channel_processor_t *ctx = &session->bredr_ctx[i];
         memset(ctx, 0, sizeof(*ctx));
         ctx->session = session;
         ctx->bredr_channel = session->bredr_config.bottom_channel + i;
@@ -87,7 +97,7 @@ int receiver_bredr_setup_channel_ctx(receiver_session_t *session)
             return -1;
 
         nco_crcf_set_frequency(ctx->nco, normalized_freq);
-        bredr_processor_init(&ctx->proc, BREDR_AC_ERRORS_DEFAULT);
+        bredr_bitstream_decoder_init(&ctx->proc, BREDR_AC_ERRORS_DEFAULT);
         if (sample_reader_init(&ctx->reader, &session->sample_dispatcher) != 0)
             return -1;
     }
@@ -95,11 +105,11 @@ int receiver_bredr_setup_channel_ctx(receiver_session_t *session)
     return 0;
 }
 
-void receiver_bredr_destroy_channel_ctx(receiver_session_t *session)
+void receiver_bredr_channel_processor_destroy(receiver_session_t *session)
 {
     for (unsigned int i = 0; i < session->bredr_config.channel_count; i++)
     {
-        receiver_bredr_channel_ctx_t *ctx = &session->bredr_ctx[i];
+        bredr_channel_processor_t *ctx = &session->bredr_ctx[i];
         if (ctx->demod)
         {
             cpfskdem_destroy(ctx->demod);
@@ -124,8 +134,8 @@ void receiver_bredr_destroy_channel_ctx(receiver_session_t *session)
     }
 }
 
-void receiver_bredr_process_channel(receiver_bredr_channel_ctx_t *ctx,
-                                    sample_block_t *blk)
+void receiver_bredr_channel_processor_process(bredr_channel_processor_t *ctx,
+                                              sample_block_t *blk)
 {
     receiver_session_t *session = ctx->session;
     uint64_t block_start_bit_index = ctx->proc.total_bits_seen;
@@ -152,7 +162,7 @@ void receiver_bredr_process_channel(receiver_bredr_channel_ctx_t *ctx,
         unsigned int raw_sym = cpfskdem_demodulate(ctx->demod, &ctx->decimated[i]);
         uint8_t bit = (uint8_t)(raw_sym & 1u);
         bredr_status_t prev_status = ctx->prev_status;
-        bredr_status_t s = bredr_push_bit(&ctx->proc, bit);
+        bredr_status_t s = bredr_bitstream_decoder_push_bit(&ctx->proc, bit);
         local_bits++;
 
         if (prev_status == BREDR_SEARCHING && s != BREDR_SEARCHING)
@@ -179,7 +189,7 @@ void receiver_bredr_process_channel(receiver_bredr_channel_ctx_t *ctx,
             continue;
 
         bredr_frame_t frame;
-        if (bredr_get_frame(&ctx->proc, &frame) != 0)
+        if (bredr_bitstream_decoder_get_frame(&ctx->proc, &frame) != 0)
             continue;
         if (session->bredr_config.lap_filter_enabled &&
             ((frame.lap & 0xFFFFFFu) != session->bredr_config.lap_filter))

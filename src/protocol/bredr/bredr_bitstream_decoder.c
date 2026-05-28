@@ -1,11 +1,11 @@
 /**
- * @file bredr_phy.c
+ * @file bredr_bitstream_decoder.c
  * @brief BR/EDR PHY-layer bitstream processor implementation.
  *
- * See bredr_phy.h for the public API and design notes.
+ * See bredr_bitstream_decoder.h for the public API and design notes.
  */
 
-#include "bredr_phy.h"
+#include "bredr_bitstream_decoder.h"
 #include "bredr_codec.h"
 
 #include <string.h>   /* memset, memcpy */
@@ -109,7 +109,7 @@ static int barker_ok(uint64_t window)
  * Does NOT clear sw_window, bits_seen, or max_ac_errors — those run
  * continuously across packet boundaries.
  */
-static void reset_collection(bredr_processor_t *proc)
+static void reset_collection(bredr_bitstream_decoder_t *proc)
 {
     proc->state = STATE_SEARCHING;
     proc->drain_count = 0;
@@ -127,11 +127,11 @@ static void reset_collection(bredr_processor_t *proc)
  * @brief Pack one bit into raw_symbols at the current collection position.
  *
  * Bits are packed LSB-first within each byte, matching BLE over-the-air
- * ordering and the convention used by ble_phy.c.
+ * ordering and the convention used by ble_bitstream_decoder.c.
  *
  * @return Non-zero if the bit was packed successfully, 0 on overflow.
  */
-static int push_symbol_bit(bredr_processor_t *proc, uint8_t bit)
+static int push_symbol_bit(bredr_bitstream_decoder_t *proc, uint8_t bit)
 {
     unsigned int byte_idx = proc->bits_collected / 8u;
     unsigned int bit_idx = proc->bits_collected % 8u;
@@ -149,7 +149,7 @@ static int push_symbol_bit(bredr_processor_t *proc, uint8_t bit)
 /**
  * @brief Read one bit from raw_symbols at an arbitrary bit position.
  */
-static uint8_t read_symbol_bit(const bredr_processor_t *proc,
+static uint8_t read_symbol_bit(const bredr_bitstream_decoder_t *proc,
                                unsigned int bit_pos)
 {
     unsigned int byte_idx = bit_pos / 8u;
@@ -163,7 +163,7 @@ static uint8_t read_symbol_bit(const bredr_processor_t *proc,
  * Public API implementation
  * ---------------------------------------------------------------------------*/
 
-void bredr_processor_init(bredr_processor_t *proc, uint8_t max_ac_errors)
+void bredr_bitstream_decoder_init(bredr_bitstream_decoder_t *proc, uint8_t max_ac_errors)
 {
     if (!proc)
         return;
@@ -172,7 +172,7 @@ void bredr_processor_init(bredr_processor_t *proc, uint8_t max_ac_errors)
     /* state = STATE_SEARCHING = 0, already zeroed */
 }
 
-bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit)
+bredr_status_t bredr_bitstream_decoder_push_bit(bredr_bitstream_decoder_t *proc, uint8_t bit)
 {
     if (!proc)
         return BREDR_ERROR;
@@ -361,7 +361,7 @@ bredr_status_t bredr_push_bit(bredr_processor_t *proc, uint8_t bit)
     return BREDR_VALID_PACKET;
 }
 
-int bredr_get_frame(bredr_processor_t *proc, bredr_frame_t *out)
+int bredr_bitstream_decoder_get_frame(bredr_bitstream_decoder_t *proc, bredr_frame_t *out)
 {
     if (!proc || !out || !proc->packet_ready)
         return -1;

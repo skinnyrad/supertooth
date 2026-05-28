@@ -8,7 +8,7 @@
 
 #include <stdint.h>
 
-#include "bredr_phy.h"
+#include "bredr_bitstream_decoder.h"
 #include "bredr_codec.h"
 #include "bredr_recovery_backend.h"
 

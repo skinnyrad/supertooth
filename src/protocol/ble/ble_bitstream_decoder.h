@@ -1,31 +1,31 @@
 /**
- * @file ble_phy.h
+ * @file ble_bitstream_decoder.h
  * @brief BLE PHY-layer bitstream processor — real-time, push-bit API.
  *
  * Overview
  * --------
  * This module captures BLE advertising frames from a demodulated bitstream.
- * Framing state lives directly inside `ble_channel_processor_t`, which keeps
+ * Framing state lives directly inside `ble_bitstream_decoder_t`, which keeps
  * ownership aligned with BR/EDR: the PHY owns capture and framing, while the
  * codec layer later turns a captured frame into a decoded packet model.
  *
  * Typical usage
  * -------------
  * @code
- *   ble_channel_processor_t proc;
- *   ble_processor_init(&proc, 37);          // advertising channel 37
+ *   ble_bitstream_decoder_t proc;
+ *   ble_bitstream_decoder_init(&proc, 37);          // advertising channel 37
  *
- *   ble_status_t status = ble_push_bit(&proc, bit);
+ *   ble_status_t status = ble_bitstream_decoder_push_bit(&proc, bit);
  *   if (status == BLE_VALID_PACKET) {
  *       ble_frame_t frame;
- *       ble_get_frame(&proc, &frame);
+ *       ble_bitstream_decoder_get_frame(&proc, &frame);
  *       // Pass frame to ble_decode_frame() ...
  *   }
  * @endcode
  */
 
-#ifndef BLE_PHY_H
-#define BLE_PHY_H
+#ifndef BLE_BITSTREAM_DECODER_H
+#define BLE_BITSTREAM_DECODER_H
 
 #include <stdint.h>
 
@@ -61,7 +61,7 @@ typedef struct
 } ble_frame_t;
 
 /* ---------------------------------------------------------------------------
- * ble_status_t — return codes for ble_push_bit()
+ * ble_status_t — return codes for ble_bitstream_decoder_push_bit()
  * ---------------------------------------------------------------------------*/
 
 typedef enum
@@ -73,7 +73,7 @@ typedef enum
 } ble_status_t;
 
 /* ---------------------------------------------------------------------------
- * ble_channel_processor_t — per-channel decoder state
+ * ble_bitstream_decoder_t — per-channel decoder state
  * ---------------------------------------------------------------------------*/
 
 typedef struct
@@ -89,18 +89,18 @@ typedef struct
     uint8_t detected_preamble;
     ble_frame_t last_frame;
     int frame_ready;
-} ble_channel_processor_t;
+} ble_bitstream_decoder_t;
 
 /* ---------------------------------------------------------------------------
  * API
  * ---------------------------------------------------------------------------*/
 
-void ble_processor_init(ble_channel_processor_t *proc, uint8_t channel_index);
-ble_status_t ble_push_bit(ble_channel_processor_t *proc, uint8_t bit);
-int ble_get_frame(ble_channel_processor_t *proc, ble_frame_t *out);
+void ble_bitstream_decoder_init(ble_bitstream_decoder_t *proc, uint8_t channel_index);
+ble_status_t ble_bitstream_decoder_push_bit(ble_bitstream_decoder_t *proc, uint8_t bit);
+int ble_bitstream_decoder_get_frame(ble_bitstream_decoder_t *proc, ble_frame_t *out);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* BLE_PHY_H */
+#endif /* BLE_BITSTREAM_DECODER_H */

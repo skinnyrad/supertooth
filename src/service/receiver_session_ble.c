@@ -1,11 +1,12 @@
-#include "receiver_dsp.h"
+#include "ble_channel_processor.h"
+#include "bredr_channel_processor.h"
 
 #include <string.h>
 #include <time.h>
 
 static void *receiver_ble_worker(void *arg)
 {
-    receiver_ble_ctx_t *ble = (receiver_ble_ctx_t *)arg;
+    ble_channel_processor_t *ble = (ble_channel_processor_t *)arg;
     receiver_session_t *session = ble->session;
     for (;;)
     {
@@ -15,7 +16,7 @@ static void *receiver_ble_worker(void *arg)
                                    &block) != 0)
             break;
 
-        receiver_ble_process_block(ble, block);
+        receiver_ble_channel_processor_process(ble, block);
         sample_block_release(block);
     }
     return NULL;
@@ -62,11 +63,11 @@ int receiver_session_run_ble(receiver_session_t *session,
     else
         memset(&session->ble_callbacks, 0, sizeof(session->ble_callbacks));
 
-    if (receiver_ble_setup(session, RECEIVER_BLE_PIPELINE_DIRECT) != 0)
+    if (receiver_ble_channel_processor_setup(session, RECEIVER_BLE_PIPELINE_DIRECT) != 0)
         return -1;
     if (receiver_ble_start_worker(session) != 0)
     {
-        receiver_ble_destroy(session);
+        receiver_ble_channel_processor_destroy(session);
         return -1;
     }
 
@@ -75,7 +76,7 @@ int receiver_session_run_ble(receiver_session_t *session,
     if (result != HACKRF_SUCCESS)
     {
         receiver_ble_stop_worker(session);
-        receiver_ble_destroy(session);
+        receiver_ble_channel_processor_destroy(session);
         return result;
     }
 
@@ -113,7 +114,7 @@ int receiver_session_run_ble(receiver_session_t *session,
     hackrf_disconnect(device);
     receiver_ble_stop_worker(session);
 
-    receiver_ble_destroy(session);
+    receiver_ble_channel_processor_destroy(session);
 
     return result;
 }

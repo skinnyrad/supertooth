@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #include "bredr_display.h"
-#include "ble_phy.h"
+#include "ble_bitstream_decoder.h"
 #include "packet_models.h"
 #include "rx_metadata.h"
 

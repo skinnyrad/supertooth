@@ -1,4 +1,4 @@
-#include "receiver_dsp.h"
+#include "bredr_channel_processor.h"
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -7,7 +7,7 @@
 
 static void *receiver_bredr_worker(void *arg)
 {
-    receiver_bredr_channel_ctx_t *ctx = (receiver_bredr_channel_ctx_t *)arg;
+    bredr_channel_processor_t *ctx = (bredr_channel_processor_t *)arg;
     receiver_session_t *session = ctx->session;
     for (;;)
     {
@@ -17,7 +17,7 @@ static void *receiver_bredr_worker(void *arg)
                                    &block) != 0)
             break;
 
-        receiver_bredr_process_channel(ctx, block);
+        receiver_bredr_channel_processor_process(ctx, block);
         sample_block_release(block);
     }
     return NULL;
@@ -65,17 +65,17 @@ int receiver_session_run_bredr(receiver_session_t *session,
 
     receiver_bredr_session_init(session, config, callbacks);
 
-    if (receiver_bredr_setup_channel_ctx(session) != 0)
+    if (receiver_bredr_channel_processor_setup(session) != 0)
     {
         bredr_piconet_store_free(&session->bredr_store);
-        receiver_bredr_destroy_channel_ctx(session);
+        receiver_bredr_channel_processor_destroy(session);
         return -1;
     }
     if (receiver_bredr_init_thread_pool(session) != 0)
     {
         if (session->bredr_worker_threads)
             receiver_bredr_stop_thread_pool(session);
-        receiver_bredr_destroy_channel_ctx(session);
+        receiver_bredr_channel_processor_destroy(session);
         bredr_piconet_store_free(&session->bredr_store);
         return -1;
     }
@@ -116,7 +116,7 @@ int receiver_session_run_bredr(receiver_session_t *session,
     }
 
     receiver_bredr_stop_thread_pool(session);
-    receiver_bredr_destroy_channel_ctx(session);
+    receiver_bredr_channel_processor_destroy(session);
     bredr_piconet_store_free(&session->bredr_store);
 
     if (stats_out)

@@ -42,7 +42,7 @@
 #include <stddef.h>
 
 #include "packet_models.h"
-#include "bredr_phy.h"
+#include "bredr_bitstream_decoder.h"
 
 #ifdef __cplusplus
 extern "C"

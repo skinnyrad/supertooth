@@ -1,11 +1,11 @@
 /**
- * @file ble_phy.c
+ * @file ble_bitstream_decoder.c
  * @brief BLE PHY-layer bitstream processor implementation.
  *
- * See ble_phy.h for the public API and design notes.
+ * See ble_bitstream_decoder.h for the public API and design notes.
  */
 
-#include "ble_phy.h"
+#include "ble_bitstream_decoder.h"
 
 #include "ble_codec.h"
 
@@ -39,7 +39,7 @@ static int ble_window_matches(uint64_t window, uint8_t *preamble_out)
     return 0;
 }
 
-static void ble_reset_collection(ble_channel_processor_t *proc)
+static void ble_reset_collection(ble_bitstream_decoder_t *proc)
 {
     proc->collecting = 0;
     proc->bits_collected = 0;
@@ -47,7 +47,7 @@ static void ble_reset_collection(ble_channel_processor_t *proc)
     proc->bits_to_collect = 0;
 }
 
-void ble_processor_init(ble_channel_processor_t *proc, uint8_t channel_index)
+void ble_bitstream_decoder_init(ble_bitstream_decoder_t *proc, uint8_t channel_index)
 {
     if (!proc)
         return;
@@ -56,7 +56,7 @@ void ble_processor_init(ble_channel_processor_t *proc, uint8_t channel_index)
     proc->channel_index = channel_index;
 }
 
-ble_status_t ble_push_bit(ble_channel_processor_t *proc, uint8_t bit)
+ble_status_t ble_bitstream_decoder_push_bit(ble_bitstream_decoder_t *proc, uint8_t bit)
 {
     if (!proc)
         return BLE_ERROR;
@@ -124,7 +124,7 @@ ble_status_t ble_push_bit(ble_channel_processor_t *proc, uint8_t bit)
     return BLE_SEARCHING;
 }
 
-int ble_get_frame(ble_channel_processor_t *proc, ble_frame_t *out)
+int ble_bitstream_decoder_get_frame(ble_bitstream_decoder_t *proc, ble_frame_t *out)
 {
     if (!proc || !out || !proc->frame_ready)
         return -1;

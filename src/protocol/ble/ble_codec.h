@@ -8,7 +8,7 @@
 
 #include <stdint.h>
 
-#include "ble_phy.h"
+#include "ble_bitstream_decoder.h"
 
 #ifdef __cplusplus
 extern "C" {

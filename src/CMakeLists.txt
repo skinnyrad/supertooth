@@ -143,11 +143,11 @@ add_library(supertooth_protocol_core STATIC
     models/rx_metadata.h
     protocol/ble/ble_display.c protocol/ble/ble_display.h
     protocol/ble/ble_codec.c protocol/ble/ble_codec.h
-    protocol/ble/ble_phy.c protocol/ble/ble_phy.h
+    protocol/ble/ble_bitstream_decoder.c protocol/ble/ble_bitstream_decoder.h
     protocol/ble/bt_assigned_numbers.c protocol/ble/bt_assigned_numbers.h
     protocol/bredr/bredr_display.c protocol/bredr/bredr_display.h
     protocol/bredr/bredr_codec.c protocol/bredr/bredr_codec.h
-    protocol/bredr/bredr_phy.c protocol/bredr/bredr_phy.h
+    protocol/bredr/bredr_bitstream_decoder.c protocol/bredr/bredr_bitstream_decoder.h
     protocol/bredr/bredr_piconet.c protocol/bredr/bredr_piconet.h
     protocol/bredr/bredr_piconet_store.c protocol/bredr/bredr_piconet_store.h
     protocol/bredr/bredr_recovery.c protocol/bredr/bredr_recovery.h
@@ -180,14 +180,15 @@ endif()
 add_library(supertooth_service STATIC
     service/sample_dispatcher.c
     service/sample_dispatcher.h
+    service/ble_channel_processor.c
+    service/ble_channel_processor.h
+    service/bredr_channel_processor.c
+    service/bredr_channel_processor.h
     service/receiver_session.c
     service/receiver_session.h
     service/receiver_session_internal.h
-    dsp/receiver_dsp.h
     dsp/rssi_measurements.c
     dsp/rssi_measurements.h
-    dsp/receiver_ble_dsp.c
-    dsp/receiver_bredr_dsp.c
     service/receiver_session_ble.c
     service/receiver_session_bredr.c
     service/receiver_session_hybrid.c

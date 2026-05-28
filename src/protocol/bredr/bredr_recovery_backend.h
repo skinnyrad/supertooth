@@ -8,7 +8,7 @@
 
 #include <stdint.h>
 
-#include "bredr_phy.h"
+#include "bredr_bitstream_decoder.h"
 #include "bredr_recovery.h"
 
 #ifdef __cplusplus

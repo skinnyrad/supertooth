@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "bredr_phy.h"
+#include "bredr_bitstream_decoder.h"
 #include "rx_metadata.h"
 
 typedef struct
