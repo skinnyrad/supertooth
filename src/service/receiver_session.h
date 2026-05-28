@@ -6,8 +6,7 @@
 
 #include "bredr_display.h"
 #include "ble_bitstream_decoder.h"
-#include "packet_models.h"
-#include "rx_metadata.h"
+#include "receive_event_models.h"
 
 #define RECEIVER_BLE_SAMPLE_RATE 2000000u
 #define RECEIVER_BREDR_CHANNEL_0_FREQ 2402000000.0

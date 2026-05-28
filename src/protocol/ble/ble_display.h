@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #include "ble_codec.h"
-#include "rx_metadata.h"
+#include "receive_event_models.h"
 
 const char *ble_pdu_type_name(uint8_t pdu_type);
 int ble_primary_addr(const ble_packet_t *pkt, const ble_address_t **addr_out);

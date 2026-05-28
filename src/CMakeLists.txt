@@ -143,8 +143,7 @@ if(HACKRF_CFLAGS_OTHER)
 endif()
 
 add_library(supertooth_protocol_core STATIC
-    models/packet_models.h
-    models/rx_metadata.h
+    models/receive_event_models.h
     protocol/ble/ble_display.c protocol/ble/ble_display.h
     protocol/ble/ble_codec.c protocol/ble/ble_codec.h
     protocol/ble/ble_bitstream_decoder.c protocol/ble/ble_bitstream_decoder.h

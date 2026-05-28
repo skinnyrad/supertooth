@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #include "bredr_bitstream_decoder.h"
-#include "rx_metadata.h"
+#include "receive_event_models.h"
 
 typedef struct
 {

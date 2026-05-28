@@ -41,7 +41,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#include "packet_models.h"
+#include "receive_event_models.h"
 #include "bredr_bitstream_decoder.h"
 
 #ifdef __cplusplus

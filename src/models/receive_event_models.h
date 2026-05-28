@@ -1,12 +1,15 @@
 /**
- * @file rx_metadata.h
- * @brief Shared receive-side metadata for SDR-agnostic packet pipelines.
+ * @file receive_event_models.h
+ * @brief Shared receive-event metadata and event wrapper types.
  */
 
-#ifndef RX_METADATA_H
-#define RX_METADATA_H
+#ifndef RECEIVE_EVENT_MODELS_H
+#define RECEIVE_EVENT_MODELS_H
 
 #include <stdint.h>
+
+#include "ble_bitstream_decoder.h"
+#include "bredr_bitstream_decoder.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -39,8 +42,20 @@ typedef struct
     uint8_t confidence;
 } rx_metadata_t;
 
+typedef struct
+{
+    rx_metadata_t meta;
+    ble_frame_t frame;
+} ble_event_t;
+
+typedef struct
+{
+    rx_metadata_t meta;
+    bredr_frame_t frame;
+} bredr_event_t;
+
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* RX_METADATA_H */
+#endif /* RECEIVE_EVENT_MODELS_H */
