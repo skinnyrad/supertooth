@@ -16,7 +16,6 @@
 
 #define RECEIVER_BLE_LNA_GAIN 24u
 #define RECEIVER_BLE_VGA_GAIN 18u
-#define RECEIVER_BLE_BUFFER_SIZE 262144u
 #define RECEIVER_BLE_SAMPLES_PER_SYMBOL 2u
 
 #define RECEIVER_BREDR_CHANNEL_BW 1000000.0
@@ -28,6 +27,12 @@
 #define RECEIVER_HYBRID_DECIMATION 10u
 #define RECEIVER_HYBRID_BLE_FREQ_OFFSET_HZ (-9500000.0f)
 #define RECEIVER_SOURCE_ID_DEFAULT 0u
+
+typedef enum
+{
+    RECEIVER_BLE_PIPELINE_DIRECT = 0,
+    RECEIVER_BLE_PIPELINE_HYBRID = 1,
+} receiver_ble_pipeline_t;
 
 typedef struct
 {
@@ -54,14 +59,19 @@ typedef struct
     nco_crcf nco;
     firdecim_crcf firdec;
     cpfskdem demod;
+    ble_channel_processor_t proc;
     float complex mixed[RECEIVER_BREDR_BUFFER_SIZE];
     float complex decimated[(unsigned int)(RECEIVER_BREDR_BUFFER_SIZE / RECEIVER_HYBRID_DECIMATION) + 1u];
-    ble_channel_processor_t ble_proc;
+    receiver_ble_pipeline_t pipeline;
+    unsigned int input_decimation;
+    uint32_t center_frequency_hz;
+    uint16_t channel_index;
+    unsigned int sample_scale;
     ble_status_t prev_status;
-    long long pkt_start_decimated;
+    long long pkt_start_sample;
     sample_reader_t reader;
     struct receiver_session *session;
-} receiver_hybrid_ble_ctx_t;
+} receiver_ble_ctx_t;
 
 struct receiver_session
 {
@@ -70,18 +80,12 @@ struct receiver_session
     pthread_cond_t  stop_cv;
     int debug;
 
-    cpfskdem demod;
-    ble_channel_processor_t ble_proc;
-    float complex *raw;
-
-    unsigned long long total_samples;
-    long long pkt_start_abs;
-    ble_status_t prev_status;
-    unsigned long packet_count;
-    unsigned long truncated_callback_blocks;
-
     receiver_ble_config_t ble_config;
     receiver_ble_callbacks_t ble_callbacks;
+    receiver_ble_ctx_t *ble_ctx;
+    pthread_t ble_worker_thread;
+    unsigned int ble_worker_running;
+    unsigned int ble_shutdown_requested;
 
     receiver_bredr_config_t bredr_config;
     receiver_bredr_callbacks_t bredr_callbacks;
@@ -94,9 +98,7 @@ struct receiver_session
     unsigned int bredr_decim_factor;
     unsigned int bredr_raw_samps_per_bit;
     uint64_t bredr_lo_freq_hz;
-    unsigned long long bredr_samples_received;
     unsigned int bredr_shutdown_requested;
-    unsigned long bredr_dropped_blocks;
     unsigned long long bredr_total_bits;
     unsigned long bredr_total_packets;
     unsigned long bredr_header_packets;
@@ -105,12 +107,10 @@ struct receiver_session
 
     receiver_hybrid_config_t hybrid_config;
     receiver_hybrid_callbacks_t hybrid_callbacks;
-    receiver_hybrid_ble_ctx_t *hybrid_ble_ctx;
     pthread_t *hybrid_worker_threads;
     unsigned int hybrid_worker_count;
     unsigned int hybrid_shutdown_requested;
     unsigned long hybrid_total_packets;
-    unsigned long hybrid_dropped_blocks;
 };
 
 rx_metadata_t receiver_make_metadata(uint64_t start_sample,

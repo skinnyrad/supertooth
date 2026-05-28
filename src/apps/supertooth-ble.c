@@ -179,7 +179,6 @@ int main(int argc, char *argv[])
         .on_packet = handle_ble_packet,
         .user = NULL,
     };
-    receiver_ble_stats_t stats;
     g_session = receiver_session_create();
     if (!g_session)
     {
@@ -190,7 +189,7 @@ int main(int argc, char *argv[])
     printf("Monitoring BLE Channel %u (%.3f GHz) for advertising packets...\n",
            g_ble_channel, (double)g_ble_freq_hz / 1e9);
     printf("Press Ctrl+C to exit\n\n");
-    int result = receiver_session_run_ble(g_session, &config, &callbacks, &stats);
+        int result = receiver_session_run_ble(g_session, &config, &callbacks);
     receiver_session_destroy(g_session);
     g_session = NULL;
     if (result != 0)
@@ -205,10 +204,7 @@ int main(int argc, char *argv[])
                                 sizeof(s_output_modes) / sizeof(s_output_modes[0])));
     printf("  Debug mode     : %s\n", g_debug ? "enabled" : "disabled");
     printf("  BLE channel    : %u (%.3f MHz)\n", g_ble_channel, (double)g_ble_freq_hz / 1e6);
-    printf("  Total samples  : %" PRIu64 "\n", stats.total_samples);
     printf("  Total packets  : %lu\n", g_packet_count);
-    printf("\n=== Debug Summary ===\n");
-    printf("  Truncated callback blocks : %lu\n", stats.truncated_callback_blocks);
 
     return 0;
 }

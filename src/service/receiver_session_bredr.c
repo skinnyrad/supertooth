@@ -92,7 +92,7 @@ int receiver_session_run_bredr(receiver_session_t *session,
         };
         result = hackrf_configure(device, &radio_config);
         if (result == HACKRF_SUCCESS)
-            result = hackrf_start_rx(device, receiver_bredr_rx_cb, session);
+            result = hackrf_start_rx(device, receiver_dispatcher_rx_cb, session);
         if (result == HACKRF_SUCCESS)
         {
             /* Block until receiver_session_request_stop() signals stop_cv. */
@@ -126,10 +126,7 @@ int receiver_session_run_bredr(receiver_session_t *session,
         stats_out->total_packets = session->bredr_total_packets;
         stats_out->header_packets = session->bredr_header_packets;
         stats_out->id_packets = session->bredr_id_packets;
-        stats_out->dropped_blocks = session->bredr_dropped_blocks;
         stats_out->channel_count = session->bredr_config.channel_count;
-        for (unsigned int i = 0; i < session->bredr_config.channel_count; i++)
-            stats_out->channel_dropped_blocks[i] = session->bredr_ctx[i].reader.dropped_blocks;
     }
 
     return result;

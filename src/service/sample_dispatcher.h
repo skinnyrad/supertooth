@@ -35,6 +35,8 @@ typedef struct
     unsigned int next_block_idx;
     sample_reader_t *readers[SAMPLE_DISPATCHER_READER_CAPACITY];
     unsigned int reader_count;
+    unsigned long long samples_received;
+    unsigned long dropped_blocks;
 } sample_dispatcher_t;
 
 void sample_block_release(sample_block_t *block);

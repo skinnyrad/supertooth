@@ -29,13 +29,6 @@ typedef struct
 
 typedef struct
 {
-    unsigned long long total_samples;
-    unsigned long packet_count;
-    unsigned long truncated_callback_blocks;
-} receiver_ble_stats_t;
-
-typedef struct
-{
     unsigned int channel_count;
     unsigned int bottom_channel;
     unsigned int rssi_averaging_window;
@@ -50,8 +43,6 @@ typedef struct
     unsigned long total_packets;
     unsigned long header_packets;
     unsigned long id_packets;
-    unsigned long dropped_blocks;
-    unsigned long channel_dropped_blocks[RECEIVER_BREDR_MAX_CHANNELS];
     unsigned int channel_count;
 } receiver_bredr_stats_t;
 
@@ -63,9 +54,6 @@ typedef struct
 typedef struct
 {
     unsigned long total_packets;
-    unsigned long dropped_blocks;
-    unsigned long bredr_channel_dropped_blocks[RECEIVER_BREDR_MAX_CHANNELS];
-    unsigned long ble_dropped_blocks;
     unsigned int bredr_channel_count;
 } receiver_hybrid_stats_t;
 
@@ -110,8 +98,7 @@ void receiver_session_request_stop(receiver_session_t *session);
 
 int receiver_session_run_ble(receiver_session_t *session,
                              const receiver_ble_config_t *config,
-                             const receiver_ble_callbacks_t *callbacks,
-                             receiver_ble_stats_t *stats_out);
+                             const receiver_ble_callbacks_t *callbacks);
 
 int receiver_session_run_bredr(receiver_session_t *session,
                                const receiver_bredr_config_t *config,
@@ -127,5 +114,6 @@ size_t receiver_session_bredr_piconet_count(receiver_session_t *session);
 int receiver_session_bredr_piconet_snapshot(receiver_session_t *session,
                                             size_t index,
                                             receiver_bredr_piconet_snapshot_t *out);
+unsigned long receiver_session_dispatcher_dropped_blocks(receiver_session_t *session);
 
 #endif

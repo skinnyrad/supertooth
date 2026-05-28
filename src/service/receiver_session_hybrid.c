@@ -24,7 +24,7 @@ static void *receiver_hybrid_bredr_worker(void *arg)
 
 static void *receiver_hybrid_ble_worker(void *arg)
 {
-    receiver_hybrid_ble_ctx_t *ble = (receiver_hybrid_ble_ctx_t *)arg;
+    receiver_ble_ctx_t *ble = (receiver_ble_ctx_t *)arg;
     receiver_session_t *session = ble->session;
     for (;;)
     {
@@ -33,7 +33,7 @@ static void *receiver_hybrid_ble_worker(void *arg)
                                    &session->hybrid_shutdown_requested,
                                    &block) != 0)
             break;
-        receiver_hybrid_process_ble(ble, block);
+        receiver_ble_process_block(ble, block);
         sample_block_release(block);
     }
     return NULL;
@@ -83,7 +83,7 @@ static int receiver_hybrid_start_thread_pool(receiver_session_t *session)
     }
 
     if (pthread_create(&session->hybrid_worker_threads[RECEIVER_BREDR_MAX_CHANNELS], NULL,
-                       receiver_hybrid_ble_worker, session->hybrid_ble_ctx) != 0)
+                       receiver_hybrid_ble_worker, session->ble_ctx) != 0)
         return -1;
 
     session->hybrid_worker_count++;
@@ -95,7 +95,7 @@ static void receiver_hybrid_stop_thread_pool(receiver_session_t *session)
     session->hybrid_shutdown_requested = 1u;
     for (unsigned int i = 0; i < RECEIVER_BREDR_MAX_CHANNELS; i++)
         sample_reader_signal(&session->bredr_ctx[i].reader);
-    sample_reader_signal(&session->hybrid_ble_ctx->reader);
+    sample_reader_signal(&session->ble_ctx->reader);
     for (unsigned int i = 0; i < session->hybrid_worker_count; i++)
         pthread_join(session->hybrid_worker_threads[i], NULL);
     free(session->hybrid_worker_threads);
@@ -126,7 +126,6 @@ int receiver_session_run_hybrid(receiver_session_t *session,
     };
     session->hybrid_config = *config;
     session->hybrid_total_packets = 0;
-    session->hybrid_dropped_blocks = 0;
     session->hybrid_shutdown_requested = 0;
     session->hybrid_worker_threads = NULL;
     session->hybrid_worker_count = 0u;
@@ -141,9 +140,9 @@ int receiver_session_run_hybrid(receiver_session_t *session,
         receiver_bredr_destroy_channel_ctx(session);
         return -1;
     }
-    if (receiver_hybrid_setup_ble(session) != 0)
+    if (receiver_ble_setup(session, RECEIVER_BLE_PIPELINE_HYBRID) != 0)
     {
-        receiver_hybrid_destroy_ble(session);
+        receiver_ble_destroy(session);
         receiver_bredr_destroy_channel_ctx(session);
         bredr_piconet_store_free(&session->bredr_store);
         return -1;
@@ -153,7 +152,7 @@ int receiver_session_run_hybrid(receiver_session_t *session,
     {
         if (session->hybrid_worker_threads)
             receiver_hybrid_stop_thread_pool(session);
-        receiver_hybrid_destroy_ble(session);
+        receiver_ble_destroy(session);
         receiver_bredr_destroy_channel_ctx(session);
         bredr_piconet_store_free(&session->bredr_store);
         return -1;
@@ -171,7 +170,7 @@ int receiver_session_run_hybrid(receiver_session_t *session,
         };
         result = hackrf_configure(device, &radio_config);
         if (result == HACKRF_SUCCESS)
-            result = hackrf_start_rx(device, receiver_hybrid_cb, session);
+            result = hackrf_start_rx(device, receiver_dispatcher_rx_cb, session);
         if (result == HACKRF_SUCCESS)
         {
             /* Block until receiver_session_request_stop() signals stop_cv. */
@@ -200,14 +199,10 @@ int receiver_session_run_hybrid(receiver_session_t *session,
     {
         memset(stats_out, 0, sizeof(*stats_out));
         stats_out->total_packets = session->hybrid_total_packets;
-        stats_out->dropped_blocks = session->hybrid_dropped_blocks;
         stats_out->bredr_channel_count = RECEIVER_BREDR_MAX_CHANNELS;
-        for (unsigned int i = 0; i < RECEIVER_BREDR_MAX_CHANNELS; i++)
-            stats_out->bredr_channel_dropped_blocks[i] = session->bredr_ctx[i].reader.dropped_blocks;
-        stats_out->ble_dropped_blocks = session->hybrid_ble_ctx->reader.dropped_blocks;
     }
 
-    receiver_hybrid_destroy_ble(session);
+    receiver_ble_destroy(session);
     receiver_bredr_destroy_channel_ctx(session);
     bredr_piconet_store_free(&session->bredr_store);
     return result;

@@ -3,39 +3,79 @@
 #include <string.h>
 #include <time.h>
 
+static void *receiver_ble_worker(void *arg)
+{
+    receiver_ble_ctx_t *ble = (receiver_ble_ctx_t *)arg;
+    receiver_session_t *session = ble->session;
+    for (;;)
+    {
+        sample_block_t *block = NULL;
+        if (sample_reader_wait_pop(&ble->reader,
+                                   &session->ble_shutdown_requested,
+                                   &block) != 0)
+            break;
+
+        receiver_ble_process_block(ble, block);
+        sample_block_release(block);
+    }
+    return NULL;
+}
+
+static int receiver_ble_start_worker(receiver_session_t *session)
+{
+    session->ble_shutdown_requested = 0u;
+    session->ble_worker_running = 0u;
+    if (pthread_create(&session->ble_worker_thread, NULL, receiver_ble_worker,
+                       session->ble_ctx) != 0)
+        return -1;
+    session->ble_worker_running = 1u;
+    return 0;
+}
+
+static void receiver_ble_stop_worker(receiver_session_t *session)
+{
+    session->ble_shutdown_requested = 1u;
+    if (session->ble_ctx)
+        sample_reader_signal(&session->ble_ctx->reader);
+    if (session->ble_worker_running)
+    {
+        pthread_join(session->ble_worker_thread, NULL);
+        session->ble_worker_running = 0u;
+    }
+}
+
 int receiver_session_run_ble(receiver_session_t *session,
                              const receiver_ble_config_t *config,
-                             const receiver_ble_callbacks_t *callbacks,
-                             receiver_ble_stats_t *stats_out)
+                             const receiver_ble_callbacks_t *callbacks)
 {
     if (!session || !config)
         return -1;
 
     session->stop_requested = 0;
-    session->total_samples = 0;
-    session->packet_count = 0;
-    session->truncated_callback_blocks = 0;
-    session->pkt_start_abs = -1;
-    session->prev_status = BLE_SEARCHING;
     session->debug = config->debug;
     session->ble_config = *config;
+    session->ble_worker_running = 0u;
+    session->ble_shutdown_requested = 0u;
+    sample_dispatcher_reset(&session->sample_dispatcher);
     if (callbacks)
         session->ble_callbacks = *callbacks;
     else
         memset(&session->ble_callbacks, 0, sizeof(session->ble_callbacks));
 
-    ble_processor_init(&session->ble_proc, config->ble_channel);
-    session->demod = cpfskdem_create(1u, 0.5f, RECEIVER_BLE_SAMPLES_PER_SYMBOL, 3u, 0.5f,
-                                     LIQUID_CPFSK_GMSK);
-    if (!session->demod)
+    if (receiver_ble_setup(session, RECEIVER_BLE_PIPELINE_DIRECT) != 0)
         return -1;
+    if (receiver_ble_start_worker(session) != 0)
+    {
+        receiver_ble_destroy(session);
+        return -1;
+    }
 
     hackrf_device *device = NULL;
     int result = hackrf_connect(&device);
     if (result != HACKRF_SUCCESS)
     {
-        cpfskdem_destroy(session->demod);
-        session->demod = NULL;
+        receiver_ble_stop_worker(session);
+        receiver_ble_destroy(session);
         return result;
     }
 
@@ -48,7 +88,7 @@ int receiver_session_run_ble(receiver_session_t *session,
 
     result = hackrf_configure(device, &radio_config);
     if (result == HACKRF_SUCCESS)
-        result = hackrf_start_rx(device, receiver_ble_rx_cb, session);
+        result = hackrf_start_rx(device, receiver_dispatcher_rx_cb, session);
 
     if (result == HACKRF_SUCCESS)
     {
@@ -71,15 +111,9 @@ int receiver_session_run_ble(receiver_session_t *session,
     }
 
     hackrf_disconnect(device);
-    cpfskdem_destroy(session->demod);
-    session->demod = NULL;
+    receiver_ble_stop_worker(session);
 
-    if (stats_out)
-    {
-        stats_out->total_samples = session->total_samples;
-        stats_out->packet_count = session->packet_count;
-        stats_out->truncated_callback_blocks = session->truncated_callback_blocks;
-    }
+    receiver_ble_destroy(session);
 
     return result;
 }

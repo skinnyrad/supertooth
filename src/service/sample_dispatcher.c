@@ -161,6 +161,8 @@ void sample_dispatcher_reset(sample_dispatcher_t *dispatcher)
 
     dispatcher->next_block_idx = 0u;
     dispatcher->reader_count = 0u;
+    dispatcher->samples_received = 0ULL;
+    dispatcher->dropped_blocks = 0ul;
     memset(dispatcher->blocks, 0, sizeof(dispatcher->blocks));
     memset(dispatcher->readers, 0, sizeof(dispatcher->readers));
 }

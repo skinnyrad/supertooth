@@ -187,26 +187,18 @@ int main(int argc, char *argv[])
     printf("Receiving... Press Ctrl+C to stop.\n");
     int result = receiver_session_run_hybrid(g_session, &config, &callbacks, &stats);
 
-    unsigned long ch_drops_total = 0ul;
-    for (unsigned int i = 0; i < stats.bredr_channel_count; i++)
-        ch_drops_total += stats.bredr_channel_dropped_blocks[i];
-
     printf("\n\n=== Session Summary ===\n");
     printf("  Output mode    : %s\n",
            app_output_mode_name(g_output_mode, s_output_modes,
                                 sizeof(s_output_modes) / sizeof(s_output_modes[0])));
     printf("  Debug mode     : %s\n", g_debug ? "enabled" : "disabled");
     printf("  Total packets  : %lu\n", stats.total_packets);
-    printf("  Dropped blocks : %lu\n", stats.dropped_blocks);
-
-    printf("\n=== Debug Summary ===\n");
-    printf("  BR/EDR queue drops (total): %lu\n", ch_drops_total);
-    printf("  BR/EDR queue drops (per-channel):\n");
-    for (unsigned int i = 0; i < stats.bredr_channel_count; i++)
-        printf("    ch=%02u dropped=%lu\n", i, stats.bredr_channel_dropped_blocks[i]);
-    printf("  BLE queue drops (total): %lu\n", stats.ble_dropped_blocks);
-    printf("  BLE queue drops (per-channel):\n");
-    printf("    ch=%02u dropped=%lu\n", BLE_CH37_INDEX, stats.ble_dropped_blocks);
+    if (g_debug)
+    {
+        printf("\n=== Debug Summary ===\n");
+        printf("  Dropped blocks : %lu\n",
+               receiver_session_dispatcher_dropped_blocks(g_session));
+    }
 
     receiver_session_destroy(g_session);
     g_session = NULL;

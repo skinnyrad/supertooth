@@ -400,21 +400,9 @@ int main(int argc, char *argv[])
     printf("  Total bits     : %" PRIu64 "\n", stats.total_bits);
     printf("  Header packets : %lu\n", stats.header_packets);
     printf("  ID packets     : %lu\n", stats.id_packets);
-    printf("  Dropped blocks : %lu\n", stats.dropped_blocks);
     if (g_debug)
-    {
-        unsigned long ch_drops_total = 0ul;
-        for (unsigned int i = 0; i < stats.channel_count; i++)
-            ch_drops_total += stats.channel_dropped_blocks[i];
-        printf("  Channel queue drops (total): %lu\n", ch_drops_total);
-        for (unsigned int i = 0; i < stats.channel_count; i++)
-        {
-            if (stats.channel_dropped_blocks[i] > 0ul)
-                printf("    ch=%02u dropped=%lu\n",
-                       g_bottom_bredr_channel + i,
-                       stats.channel_dropped_blocks[i]);
-        }
-    }
+        printf("  Dropped blocks : %lu\n",
+               receiver_session_dispatcher_dropped_blocks(g_session));
     printf("\n");
     print_session_piconets();
     receiver_session_destroy(g_session);

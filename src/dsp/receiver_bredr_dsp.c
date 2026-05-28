@@ -245,7 +245,7 @@ void receiver_bredr_process_channel(receiver_bredr_channel_ctx_t *ctx,
     __atomic_add_fetch(&session->bredr_total_bits, local_bits, __ATOMIC_RELAXED);
 }
 
-int receiver_bredr_rx_cb(hackrf_transfer *transfer)
+int receiver_dispatcher_rx_cb(hackrf_transfer *transfer)
 {
     receiver_session_t *session = (receiver_session_t *)transfer->rx_ctx;
     if (!session || session->stop_requested)
@@ -256,13 +256,13 @@ int receiver_bredr_rx_cb(hackrf_transfer *transfer)
     if (num_samples > RECEIVER_BREDR_BUFFER_SIZE)
         num_samples = RECEIVER_BREDR_BUFFER_SIZE;
 
-    unsigned long long block_base = session->bredr_samples_received;
-    session->bredr_samples_received += num_samples;
+    unsigned long long block_base = session->sample_dispatcher.samples_received;
+    session->sample_dispatcher.samples_received += num_samples;
 
     sample_block_t *blk = sample_dispatcher_acquire_block(&session->sample_dispatcher);
     if (!blk)
     {
-        session->bredr_dropped_blocks++;
+        session->sample_dispatcher.dropped_blocks++;
         if (session->debug)
             fprintf(stderr, "[debug] dropped callback block: block pool exhausted (%u)\n",
                     SAMPLE_DISPATCHER_BLOCK_CAPACITY);

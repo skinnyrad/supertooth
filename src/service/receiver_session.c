@@ -55,9 +55,7 @@ void receiver_bredr_session_init(receiver_session_t *session,
     session->bredr_config = *config;
     session->bredr_worker_threads = NULL;
     session->bredr_worker_count = 0u;
-    session->bredr_samples_received = 0ULL;
     session->bredr_shutdown_requested = 0u;
-    session->bredr_dropped_blocks = 0ul;
     session->bredr_total_bits = 0ULL;
     session->bredr_total_packets = 0ul;
     session->bredr_header_packets = 0ul;
@@ -79,17 +77,14 @@ receiver_session_t *receiver_session_create(void)
     if (!session)
         return NULL;
 
-    session->pkt_start_abs = -1;
-    session->prev_status = BLE_SEARCHING;
     pthread_mutex_init(&session->decoded_packet_mutex, NULL);
     pthread_mutex_init(&session->stop_mutex, NULL);
     pthread_cond_init(&session->stop_cv, NULL);
 
-    session->raw = (float complex *)calloc(RECEIVER_BLE_BUFFER_SIZE / 2u, sizeof(*session->raw));
+    session->ble_ctx = (receiver_ble_ctx_t *)calloc(1, sizeof(*session->ble_ctx));
     session->bredr_ctx = (receiver_bredr_channel_ctx_t *)calloc(RECEIVER_BREDR_MAX_CHANNELS,
                                                                 sizeof(*session->bredr_ctx));
-    session->hybrid_ble_ctx = (receiver_hybrid_ble_ctx_t *)calloc(1, sizeof(*session->hybrid_ble_ctx));
-    if (!session->raw || !session->bredr_ctx || !session->hybrid_ble_ctx)
+    if (!session->ble_ctx || !session->bredr_ctx)
     {
         receiver_session_destroy(session);
         return NULL;
@@ -111,10 +106,9 @@ void receiver_session_destroy(receiver_session_t *session)
         pthread_cond_destroy(&session->stop_cv);
         pthread_mutex_destroy(&session->stop_mutex);
         pthread_mutex_destroy(&session->decoded_packet_mutex);
-        free(session->hybrid_ble_ctx);
         sample_dispatcher_destroy(&session->sample_dispatcher);
         free(session->bredr_ctx);
-        free(session->raw);
+        free(session->ble_ctx);
     }
     free(session);
 }
@@ -157,4 +151,12 @@ int receiver_session_bredr_piconet_snapshot(receiver_session_t *session,
     receiver_fill_bredr_piconet_snapshot(pnet, out);
     pthread_mutex_unlock(&session->decoded_packet_mutex);
     return 0;
+}
+
+unsigned long receiver_session_dispatcher_dropped_blocks(receiver_session_t *session)
+{
+    if (!session)
+        return 0ul;
+
+    return session->sample_dispatcher.dropped_blocks;
 }
