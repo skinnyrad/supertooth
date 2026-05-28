@@ -121,6 +121,10 @@ set(SUPERTOOTH_SOURCE_INCLUDE_DIRS
 )
 
 add_library(supertooth_radio_support STATIC
+    radio/radio_common.c
+    radio/radio_common.h
+    radio/sample_dispatcher.c
+    radio/sample_dispatcher.h
     radio/hackrf.c
     radio/hackrf.h
 )
@@ -178,8 +182,6 @@ if(UNIX AND NOT APPLE)
 endif()
 
 add_library(supertooth_service STATIC
-    service/sample_dispatcher.c
-    service/sample_dispatcher.h
     service/ble_channel_processor.c
     service/ble_channel_processor.h
     service/bredr_channel_processor.c

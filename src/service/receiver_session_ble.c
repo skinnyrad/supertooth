@@ -1,5 +1,5 @@
 #include "ble_channel_processor.h"
-#include "bredr_channel_processor.h"
+#include "radio_common.h"
 
 #include <string.h>
 #include <time.h>
@@ -71,27 +71,28 @@ int receiver_session_run_ble(receiver_session_t *session,
         return -1;
     }
 
-    hackrf_device *device = NULL;
-    int result = hackrf_connect(&device);
-    if (result != HACKRF_SUCCESS)
+    radio_device_t *device = NULL;
+    int result = radio_open(&device, RADIO_DEVICE_HACKRF,
+                            &session->sample_dispatcher, session->debug);
+    if (result != RADIO_SUCCESS)
     {
         receiver_ble_stop_worker(session);
         receiver_ble_channel_processor_destroy(session);
         return result;
     }
 
-    hackrf_config_t radio_config = {
+    radio_stream_config_t radio_config = {
         .lo_freq_hz = config->lo_freq_hz,
         .sample_rate = RECEIVER_BLE_SAMPLE_RATE,
         .lna_gain = RECEIVER_BLE_LNA_GAIN,
         .vga_gain = RECEIVER_BLE_VGA_GAIN,
     };
 
-    result = hackrf_configure(device, &radio_config);
-    if (result == HACKRF_SUCCESS)
-        result = hackrf_start_rx(device, receiver_dispatcher_rx_cb, session);
+    result = radio_configure(device, &radio_config);
+    if (result == RADIO_SUCCESS)
+        result = radio_start_rx(device);
 
-    if (result == HACKRF_SUCCESS)
+    if (result == RADIO_SUCCESS)
     {
         /* Block until receiver_session_request_stop() signals stop_cv. */
         pthread_mutex_lock(&session->stop_mutex);
@@ -108,10 +109,10 @@ int receiver_session_run_ble(receiver_session_t *session,
             pthread_cond_timedwait(&session->stop_cv, &session->stop_mutex, &ts);
         }
         pthread_mutex_unlock(&session->stop_mutex);
-        hackrf_stop_rx(device);
+        radio_stop_rx(device);
     }
 
-    hackrf_disconnect(device);
+    radio_close(device);
     receiver_ble_stop_worker(session);
 
     receiver_ble_channel_processor_destroy(session);

@@ -2,18 +2,7 @@
 #include "rssi_measurements.h"
 
 #include <math.h>
-#include <stdio.h>
 #include <string.h>
-
-/**
- * @brief Convert a HackRF interleaved int8_t IQ sample to normalised float complex.
- */
-static inline float complex hackrf_iq_to_complex(const int8_t *samples,
-                                                 unsigned int sample_index)
-{
-    return samples[2u * sample_index] / 128.0f +
-           (samples[2u * sample_index + 1u] / 128.0f) * _Complex_I;
-}
 
 static float receiver_bredr_rssi_from_history(bredr_channel_processor_t *ctx,
                                               uint64_t start_sample,
@@ -253,41 +242,4 @@ void receiver_bredr_channel_processor_process(bredr_channel_processor_t *ctx,
     }
 
     __atomic_add_fetch(&session->bredr_total_bits, local_bits, __ATOMIC_RELAXED);
-}
-
-int receiver_dispatcher_rx_cb(hackrf_transfer *transfer)
-{
-    receiver_session_t *session = (receiver_session_t *)transfer->rx_ctx;
-    if (!session || session->stop_requested)
-        return -1;
-
-    int8_t *samples = (int8_t *)transfer->buffer;
-    unsigned int num_samples = (unsigned int)(transfer->valid_length / 2u);
-    if (num_samples > RECEIVER_BREDR_BUFFER_SIZE)
-        num_samples = RECEIVER_BREDR_BUFFER_SIZE;
-
-    unsigned long long block_base = session->sample_dispatcher.samples_received;
-    session->sample_dispatcher.samples_received += num_samples;
-
-    sample_block_t *blk = sample_dispatcher_acquire_block(&session->sample_dispatcher);
-    if (!blk)
-    {
-        session->sample_dispatcher.dropped_blocks++;
-        if (session->debug)
-            fprintf(stderr, "[debug] dropped callback block: block pool exhausted (%u)\n",
-                    SAMPLE_DISPATCHER_BLOCK_CAPACITY);
-        return session->stop_requested ? -1 : 0;
-    }
-
-    blk->num_samples = num_samples;
-    blk->block_base_sample = block_base;
-
-    for (unsigned int i = 0; i < num_samples; i++)
-        blk->samples[i] = hackrf_iq_to_complex(samples, i);
-
-    __atomic_thread_fence(__ATOMIC_RELEASE);
-    sample_dispatcher_push_block(&session->sample_dispatcher, blk);
-    sample_block_release(blk);
-
-    return session->stop_requested ? -1 : 0;
 }

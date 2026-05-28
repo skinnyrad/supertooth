@@ -35,7 +35,6 @@ typedef struct
     unsigned int next_block_idx;
     sample_reader_t *readers[SAMPLE_DISPATCHER_READER_CAPACITY];
     unsigned int reader_count;
-    unsigned long long samples_received;
     unsigned long dropped_blocks;
 } sample_dispatcher_t;
 
@@ -44,6 +43,7 @@ void sample_block_release(sample_block_t *block);
 int sample_dispatcher_init(sample_dispatcher_t *dispatcher);
 void sample_dispatcher_destroy(sample_dispatcher_t *dispatcher);
 void sample_dispatcher_reset(sample_dispatcher_t *dispatcher);
+void sample_dispatcher_note_drop(sample_dispatcher_t *dispatcher, int debug_enabled);
 sample_block_t *sample_dispatcher_acquire_block(sample_dispatcher_t *dispatcher);
 unsigned int sample_dispatcher_push_block(sample_dispatcher_t *dispatcher,
                                           sample_block_t *block);
@@ -55,7 +55,5 @@ void sample_reader_signal(sample_reader_t *reader);
 int sample_reader_wait_pop(sample_reader_t *reader,
                            const unsigned int *shutdown_requested,
                            sample_block_t **block);
-
-
 
 #endif

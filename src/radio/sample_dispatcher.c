@@ -1,6 +1,7 @@
 #include "sample_dispatcher.h"
 
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -161,10 +162,20 @@ void sample_dispatcher_reset(sample_dispatcher_t *dispatcher)
 
     dispatcher->next_block_idx = 0u;
     dispatcher->reader_count = 0u;
-    dispatcher->samples_received = 0ULL;
     dispatcher->dropped_blocks = 0ul;
     memset(dispatcher->blocks, 0, sizeof(dispatcher->blocks));
     memset(dispatcher->readers, 0, sizeof(dispatcher->readers));
+}
+
+void sample_dispatcher_note_drop(sample_dispatcher_t *dispatcher, int debug_enabled)
+{
+    if (!dispatcher)
+        return;
+
+    dispatcher->dropped_blocks++;
+    if (debug_enabled)
+        fprintf(stderr, "[debug] dropped callback block: block pool exhausted (%u)\n",
+                SAMPLE_DISPATCHER_BLOCK_CAPACITY);
 }
 
 sample_block_t *sample_dispatcher_acquire_block(sample_dispatcher_t *dispatcher)

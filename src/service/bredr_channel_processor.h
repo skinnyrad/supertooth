@@ -3,7 +3,6 @@
 
 #include "receiver_session_internal.h"
 
-int receiver_dispatcher_rx_cb(hackrf_transfer *transfer);
 void receiver_bredr_update_layout(receiver_session_t *session);
 int receiver_bredr_channel_processor_setup(receiver_session_t *session);
 void receiver_bredr_channel_processor_destroy(receiver_session_t *session);

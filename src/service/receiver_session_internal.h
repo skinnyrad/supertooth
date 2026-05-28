@@ -10,7 +10,6 @@
 #include <liquid/liquid.h>
 
 #include "sample_dispatcher.h"
-#include "hackrf.h"
 #include "bredr_piconet.h"
 #include "bredr_piconet_store.h"
 
