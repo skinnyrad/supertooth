@@ -1,7 +1,7 @@
 #ifndef BREDR_CHANNEL_PROCESSOR_H
 #define BREDR_CHANNEL_PROCESSOR_H
 
-#include "receiver_session_internal.h"
+#include "receiver_session.h"
 
 void receiver_bredr_update_layout(receiver_session_t *session);
 int receiver_bredr_channel_processor_setup(receiver_session_t *session);
