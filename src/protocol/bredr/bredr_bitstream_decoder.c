@@ -113,6 +113,9 @@ static void reset_collection(bredr_bitstream_decoder_t *proc)
 {
     proc->state = STATE_SEARCHING;
     proc->drain_count = 0;
+    proc->collected_header_raw = 0u;
+    memset(proc->collected_air_payload, 0, sizeof(proc->collected_air_payload));
+    proc->collected_air_payload_bits = 0u;
     proc->bits_collected = 0;
     proc->bits_to_collect = 0;
     proc->header_decoded = 0;
@@ -120,43 +123,42 @@ static void reset_collection(bredr_bitstream_decoder_t *proc)
     proc->detected_ac_errors = 0;
     proc->detected_sw_last = 0;
     proc->trailer_bits = 0;
-    memset(proc->raw_symbols, 0, sizeof(proc->raw_symbols));
 }
 
 /**
- * @brief Pack one bit into raw_symbols at the current collection position.
- *
- * Bits are packed LSB-first within each byte, matching BLE over-the-air
- * ordering and the convention used by ble_bitstream_decoder.c.
+ * @brief Pack one header bit into the raw header buffer.
  *
  * @return Non-zero if the bit was packed successfully, 0 on overflow.
  */
-static int push_symbol_bit(bredr_bitstream_decoder_t *proc, uint8_t bit)
+static int push_header_bit(bredr_bitstream_decoder_t *proc, uint8_t bit)
 {
-    unsigned int byte_idx = proc->bits_collected / 8u;
-    unsigned int bit_idx = proc->bits_collected % 8u;
-
-    if (byte_idx >= sizeof(proc->raw_symbols))
+    if (proc->bits_collected >= 54u)
         return 0;
 
     if (bit & 1u)
-        proc->raw_symbols[byte_idx] |= (uint8_t)(1u << bit_idx);
+        proc->collected_header_raw |= (uint64_t)1u << proc->bits_collected;
 
     proc->bits_collected++;
     return 1;
 }
 
 /**
- * @brief Read one bit from raw_symbols at an arbitrary bit position.
+ * @brief Pack one payload bit into the air payload buffer.
  */
-static uint8_t read_symbol_bit(const bredr_bitstream_decoder_t *proc,
-                               unsigned int bit_pos)
+static int push_air_payload_bit(bredr_bitstream_decoder_t *proc, uint8_t bit)
 {
-    unsigned int byte_idx = bit_pos / 8u;
-    unsigned int bit_idx = bit_pos % 8u;
-    if (byte_idx >= sizeof(proc->raw_symbols))
-        return 0u;
-    return (proc->raw_symbols[byte_idx] >> bit_idx) & 1u;
+    unsigned int byte_idx = proc->collected_air_payload_bits / 8u;
+    unsigned int bit_idx = proc->collected_air_payload_bits % 8u;
+
+    if (byte_idx >= sizeof(proc->collected_air_payload))
+        return 0;
+
+    if (bit & 1u)
+        proc->collected_air_payload[byte_idx] |= (uint8_t)(1u << bit_idx);
+
+    proc->collected_air_payload_bits++;
+    proc->bits_collected++;
+    return 1;
 }
 
 /* ---------------------------------------------------------------------------
@@ -226,7 +228,7 @@ bredr_status_t bredr_bitstream_decoder_push_bit(bredr_bitstream_decoder_t *proc,
             proc->last_frame.lap = lap;
             proc->last_frame.ac_errors = ac_errors;
             proc->last_frame.has_header = 0u;
-            proc->last_frame.payload_bits = 0u;
+            proc->last_frame.air_payload_bits = 0u;
             proc->packet_ready = 1;
             return BREDR_VALID_PACKET;
         }
@@ -272,7 +274,7 @@ bredr_status_t bredr_bitstream_decoder_push_bit(bredr_bitstream_decoder_t *proc,
             proc->last_frame.lap = proc->detected_lap;
             proc->last_frame.ac_errors = proc->detected_ac_errors;
             proc->last_frame.has_header = 0u;
-            proc->last_frame.payload_bits = 0u;
+            proc->last_frame.air_payload_bits = 0u;
             proc->packet_ready = 1;
             reset_collection(proc);
             return BREDR_VALID_PACKET;
@@ -280,19 +282,22 @@ bredr_status_t bredr_bitstream_decoder_push_bit(bredr_bitstream_decoder_t *proc,
 
         /* Valid trailer — transition to header/payload collection. */
         proc->state = STATE_COLLECTING;
+        proc->collected_header_raw = 0u;
+        memset(proc->collected_air_payload, 0, sizeof(proc->collected_air_payload));
+        proc->collected_air_payload_bits = 0u;
         proc->bits_collected = 0u;
         proc->bits_to_collect = 0u;
         proc->header_decoded = 0;
-        memset(proc->raw_symbols, 0, sizeof(proc->raw_symbols));
         return BREDR_COLLECTING;
     }
 
     /* ======================================================================
      * STATE: COLLECTING
-     * Pack bits into raw_symbols.  Decode header after 54 bits, then wait
-     * for the payload to complete.
+     * Capture header bits into the raw header accumulator, then capture raw
+     * payload bits directly into the payload buffer.
      * ====================================================================== */
-    if (!push_symbol_bit(proc, b))
+    if ((!proc->header_decoded && !push_header_bit(proc, b)) ||
+        (proc->header_decoded && !push_air_payload_bit(proc, b)))
     {
         /* Buffer overflow — something went wrong; reset. */
         reset_collection(proc);
@@ -300,8 +305,8 @@ bredr_status_t bredr_bitstream_decoder_push_bit(bredr_bitstream_decoder_t *proc,
     }
 
     /* -------------------------------------------------------------------
-     * After the 54-bit FEC-encoded header is collected, stash the raw header
-     * bits and switch to a fixed post-access-code ceiling.
+        * After the 54-bit FEC-encoded header is collected, switch to a fixed
+        * post-access-code ceiling.
      *
      * The BR/EDR header is whitened, so without CLK1-6 we cannot trust the
      * TYPE field yet. Sizing capture from the still-whitened header can stop
@@ -310,24 +315,18 @@ bredr_status_t bredr_bitstream_decoder_push_bit(bredr_bitstream_decoder_t *proc,
      * ------------------------------------------------------------------- */
     if (!proc->header_decoded && proc->bits_collected >= 54u)
     {
-        uint64_t header_raw = 0u;
-        for (unsigned int i = 0u; i < 54u; i++)
-            if (read_symbol_bit(proc, i))
-                header_raw |= (uint64_t)1u << i;
-        proc->last_frame.header_raw = header_raw;
-        proc->bits_to_collect = BREDR_BODY_BITS_MAX;
-
+        proc->bits_to_collect = 54u + BR_MAX_AIR_PAYLOAD_BITS;
         proc->header_decoded = 1;
     }
 
     /* -------------------------------------------------------------------
      * Determine how many bits we are waiting for.
-     * Before the header is decoded, collect up to BREDR_BODY_BITS_MAX bits as
+     * Before the header is decoded, collect up to the maximum body size as
      * a safety ceiling (should not normally happen given the 54-bit trigger).
      * ------------------------------------------------------------------- */
     unsigned int target = proc->header_decoded
                               ? proc->bits_to_collect
-                              : BREDR_BODY_BITS_MAX;
+                              : (54u + BR_MAX_AIR_PAYLOAD_BITS);
 
     if (proc->bits_collected < target)
         return BREDR_COLLECTING;
@@ -337,22 +336,14 @@ bredr_status_t bredr_bitstream_decoder_push_bit(bredr_bitstream_decoder_t *proc,
      * ====================================================================== */
     bredr_frame_t *frame = &proc->last_frame;
 
-    /* header_raw was stored in frame earlier; save it across the memset. */
-    uint64_t saved_header_raw = frame->header_raw;
     memset(frame, 0, sizeof(*frame));
     frame->start_bit_index = proc->detected_packet_start_bit;
     frame->lap = proc->detected_lap;
     frame->ac_errors = proc->detected_ac_errors;
     frame->has_header = 1u;
-    frame->header_raw = saved_header_raw;
-    frame->payload_bits = (proc->bits_collected > 54u) ? (proc->bits_collected - 54u) : 0u;
-
-    /* Extract payload bytes from raw_symbols starting at bit 54.
-     * Bits are packed LSB-first; read them out byte by byte. */
-    bredr_extract_payload_bytes(proc->raw_symbols,
-                                proc->bits_collected,
-                                frame->payload,
-                                BREDR_MAX_PAYLOAD_BYTES);
+    frame->header_raw = proc->collected_header_raw;
+    frame->air_payload_bits = proc->collected_air_payload_bits;
+    memcpy(frame->air_payload, proc->collected_air_payload, sizeof(frame->air_payload));
 
     proc->packet_ready = 1;
 

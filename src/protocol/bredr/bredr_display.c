@@ -2,6 +2,7 @@
 
 #include <inttypes.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "bredr_codec.h"
 
@@ -45,22 +46,22 @@ static void bredr_format_rssi_value(char out[8], int seen, float value)
 
 static void bredr_print_payload_preview(const bredr_frame_t *frame)
 {
-    unsigned int payload_bytes = bredr_frame_payload_bytes(frame);
-    if (!frame || payload_bytes == 0u)
+    unsigned int air_payload_bytes = bredr_frame_air_payload_bytes(frame);
+    if (!frame || air_payload_bytes == 0u)
     {
         printf("Payload      : (none)\n");
         return;
     }
 
-    unsigned int show = payload_bytes < 32u ? payload_bytes : 32u;
-    printf("Payload      : %u bits (%u bytes)", frame->payload_bits, payload_bytes);
+    unsigned int show = air_payload_bytes < 32u ? air_payload_bytes : 32u;
+    printf("Payload      : %u bits (%u bytes)", frame->air_payload_bits, air_payload_bytes);
     for (unsigned int i = 0; i < show; i++)
     {
         if (i % 16u == 0u)
             printf("\n               ");
-        printf("%02X ", frame->payload[i]);
+        printf("%02X ", frame->air_payload[i]);
     }
-    if (payload_bytes > show)
+    if (air_payload_bytes > show)
         printf("...");
     printf("\n");
 }
@@ -77,101 +78,34 @@ static uint32_t bredr_sample_to_rx_clk_1600(uint64_t start_sample,
     return (uint32_t)(num / (uint64_t)sample_rate_hz);
 }
 
-static int bredr_build_decode_context(const bredr_piconet_snapshot_t *pnet,
-                                      const rx_metadata_t *meta,
-                                      unsigned int sample_rate_hz,
-                                      bredr_decode_context_t *out)
+static int bredr_build_decode_inputs(const bredr_piconet_snapshot_t *pnet,
+                                     const rx_metadata_t *meta,
+                                     unsigned int sample_rate_hz,
+                                     uint8_t *uap_out,
+                                     uint8_t *clk1_6_out)
 {
     uint32_t rx_clk_1600;
     uint32_t delta;
 
-    if (!out)
+    if (!uap_out || !clk1_6_out)
         return 0;
 
-    out->have_uap = 0u;
-    out->uap = 0u;
-    out->have_clk1_6 = 0u;
-    out->clk1_6 = 0u;
+    *uap_out = 0u;
+    *clk1_6_out = 0u;
 
     if (!pnet)
         return 0;
 
     if (pnet->uap_found)
-    {
-        out->have_uap = 1u;
-        out->uap = pnet->uap;
-    }
+        *uap_out = pnet->uap;
     if (pnet->clk_known && meta && sample_rate_hz != 0u)
     {
         rx_clk_1600 = bredr_sample_to_rx_clk_1600(meta->start_sample, sample_rate_hz);
         delta = rx_clk_1600 - pnet->last_successful_rx_clk_1600;
-        out->have_clk1_6 = 1u;
-        out->clk1_6 = (uint8_t)((pnet->central_clk_1_6 + delta) & 0x3Fu);
+        *clk1_6_out = (uint8_t)((pnet->central_clk_1_6 + delta) & 0x3Fu);
     }
 
-    return out->have_uap && out->have_clk1_6;
-}
-
-static const char *bredr_payload_coding_desc(bredr_payload_coding_t coding)
-{
-    switch (coding)
-    {
-    case BREDR_PAYLOAD_CODING_NONE:
-        return "None";
-    case BREDR_PAYLOAD_CODING_FEC_2_3:
-        return "FEC 2/3";
-    case BREDR_PAYLOAD_CODING_FEC_1_3:
-        return "FEC 1/3";
-    case BREDR_PAYLOAD_CODING_UNKNOWN:
-    default:
-        return "Unknown";
-    }
-}
-
-static const char *bredr_l2cap_cid_desc(uint16_t cid)
-{
-    switch (cid)
-    {
-    case 0x0001u:
-        return "L2CAP Signaling";
-    case 0x0002u:
-        return "Connectionless";
-    case 0x0005u:
-        return "LE Signaling";
-    default:
-        return NULL;
-    }
-}
-
-static const char *bredr_l2cap_signal_desc(uint8_t code)
-{
-    switch (code)
-    {
-    case 0x01u:
-        return "Command Reject";
-    case 0x02u:
-        return "Connection Request";
-    case 0x03u:
-        return "Connection Response";
-    case 0x04u:
-        return "Configuration Request";
-    case 0x05u:
-        return "Configuration Response";
-    case 0x06u:
-        return "Disconnection Request";
-    case 0x07u:
-        return "Disconnection Response";
-    case 0x08u:
-        return "Echo Request";
-    case 0x09u:
-        return "Echo Response";
-    case 0x0Au:
-        return "Information Request";
-    case 0x0Bu:
-        return "Information Response";
-    default:
-        return NULL;
-    }
+    return pnet->uap_found && pnet->clk_known && meta && sample_rate_hz != 0u;
 }
 
 static void bredr_print_hex_line(const char *label,
@@ -202,57 +136,35 @@ static void bredr_print_decoded_payload(const bredr_packet_t *packet)
 
     printf("\n[Decoded Payload Info]\n");
     printf("Family       : %s\n", bredr_payload_family_name(packet->family));
-    printf("Coding       : %s\n", bredr_payload_coding_desc(packet->coding));
 
     switch (packet->family)
     {
     case BREDR_PAYLOAD_FAMILY_ACL:
     {
-        const bredr_acl_packet_t *acl = &packet->payload.acl;
-        const char *cid_desc = acl->has_l2cap ? bredr_l2cap_cid_desc(acl->l2cap.cid) : NULL;
+        const bredr_acl_payload_t *acl = &packet->payload.acl;
+        unsigned int max_length = bredr_acl_max_user_payload_bytes(packet->header.type);
         printf("LLID         : %s (%u)\n",
                bredr_llid_name(acl->llid),
                (unsigned int)(acl->llid & 0x03u));
         printf("ACL FLOW     : %u\n", acl->flow & 1u);
-        printf("ACL Length   : %u bytes\n", acl->length);
-        printf("ACL Body     : %u bytes\n", acl->body_len);
-        if (acl->has_l2cap)
+        if (packet->limit == BREDR_DECODE_LIMIT_IMPOSSIBLE_ACL_LENGTH && max_length != 0u)
         {
-            if (cid_desc)
-                printf("L2CAP CID    : 0x%04X (%s)\n", acl->l2cap.cid, cid_desc);
-            else
-                printf("L2CAP CID    : 0x%04X\n", acl->l2cap.cid);
-            printf("L2CAP Length : %u bytes\n", acl->l2cap.pdu_length);
+            printf("ACL Length   : %u bytes [impossible for %s, max %u]\n",
+                   acl->length,
+                   bredr_packet_type_name(packet->header.type),
+                   max_length);
+            printf("             : likely E0-encrypted payload header, or HEC-ambiguous CLK1-6 (~3%% false match)\n");
         }
-        if (acl->has_l2cap_signal)
-        {
-            const char *signal_desc = bredr_l2cap_signal_desc(acl->l2cap_signal.code);
-            if (signal_desc)
-                printf("L2CAP Cmd    : 0x%02X (%s)\n", acl->l2cap_signal.code, signal_desc);
-            else
-                printf("L2CAP Cmd    : 0x%02X\n", acl->l2cap_signal.code);
-            printf("Cmd Ident    : 0x%02X\n", acl->l2cap_signal.identifier);
-            printf("Cmd Length   : %u bytes\n", acl->l2cap_signal.length);
-        }
-        if (acl->has_lmp)
-        {
-            printf("LMP TID      : %u\n", acl->lmp.tid & 1u);
-            if (acl->lmp.has_ext_opcode)
-                printf("LMP Opcode   : escape=0x%02X ext=0x%02X\n",
-                       acl->lmp.opcode,
-                       acl->lmp.ext_opcode);
-            else
-                printf("LMP Opcode   : 0x%02X\n", acl->lmp.opcode);
-            bredr_print_hex_line("LMP Params", acl->lmp.params, acl->lmp.params_len, 24u);
-        }
-        if (!acl->has_l2cap && !acl->has_lmp)
-            bredr_print_hex_line("ACL Body", acl->body, acl->body_len, 24u);
+        else
+            printf("ACL Length   : %u bytes\n", acl->length);
+        if (acl->has_mic)
+            printf("ACL MIC      : 0x%08X [%s]\n", acl->mic, acl->mic_ok ? "PASS" : "FAIL");
+        if (acl->crc_ok || acl->crc != 0u)
+            printf("ACL CRC      : 0x%04X [%s]\n", acl->crc, acl->crc_ok ? "PASS" : "FAIL");
+        if (packet->status == BREDR_DECODE_FULL_PAYLOAD)
+            bredr_print_hex_line("ACL Payload", acl->user_payload, acl->length, 24u);
         break;
     }
-    case BREDR_PAYLOAD_FAMILY_SCO:
-    case BREDR_PAYLOAD_FAMILY_ESCO:
-        printf("Sync Bytes   : %u\n", packet->payload.sync.payload_bytes);
-        break;
     case BREDR_PAYLOAD_FAMILY_CONTROL:
         printf("Payload      : (none)\n");
         break;
@@ -269,9 +181,11 @@ void bredr_print_packet_details(const bredr_frame_t *frame,
                                 const rx_metadata_t *meta,
                                 unsigned int sample_rate_hz)
 {
-    bredr_decode_context_t decode_ctx;
     bredr_packet_t packet;
-    int have_decode_ctx;
+    uint8_t decode_uap;
+    uint8_t decode_clk1_6;
+    int decode_ok;
+    int have_decode_inputs;
     int semantic_payload_ready;
 
     printf("\n[%s Packet Info]\n",
@@ -283,12 +197,22 @@ void bredr_print_packet_details(const bredr_frame_t *frame,
     else
         printf("HEADER       : (none — shortened access code)\n");
 
-    have_decode_ctx = bredr_build_decode_context(pnet, meta, sample_rate_hz, &decode_ctx);
-    bredr_decode_frame(frame, have_decode_ctx ? &decode_ctx : NULL, &packet);
+    memset(&packet, 0, sizeof(packet));
+    have_decode_inputs = bredr_build_decode_inputs(pnet, meta, sample_rate_hz, &decode_uap, &decode_clk1_6);
+    if (have_decode_inputs)
+    {
+        decode_ok = bredr_decode_frame(frame, decode_uap, decode_clk1_6, &packet);
+    }
+    else
+    {
+        decode_ok = 0;
+        if (frame->has_header)
+            packet.limit = BREDR_DECODE_LIMIT_MISSING_CONTEXT;
+    }
 
     if (frame->has_header)
     {
-        if (packet.has_decoded_header)
+        if (decode_ok > 0)
         {
             printf("\n[Decoded Header Info]\n");
             printf("HEC          : 0x%02X [PASS]\n", packet.header.hec);
@@ -301,7 +225,9 @@ void bredr_print_packet_details(const bredr_frame_t *frame,
         }
 
         semantic_payload_ready = (packet.status == BREDR_DECODE_FULL_PAYLOAD);
-        if (semantic_payload_ready)
+        if (packet.family == BREDR_PAYLOAD_FAMILY_ACL && packet.status == BREDR_DECODE_PARTIAL_PAYLOAD)
+            bredr_print_decoded_payload(&packet);
+        else if (semantic_payload_ready)
             bredr_print_decoded_payload(&packet);
 
         if (!semantic_payload_ready)
@@ -309,7 +235,7 @@ void bredr_print_packet_details(const bredr_frame_t *frame,
             bredr_print_payload_preview(frame);
             if (packet.limit != BREDR_DECODE_LIMIT_NONE)
                 printf("Decode       : %s\n", bredr_decode_limit_desc(packet.limit));
-            else if (!packet.has_decoded_header)
+            else if (decode_ok <= 0)
                 printf("Decode       : raw packet only\n");
         }
     }

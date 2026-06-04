@@ -81,30 +81,15 @@ extern "C"
  * Public constants
  * ---------------------------------------------------------------------------*/
 
-/**
- * Maximum total on-air symbols (bits) in a 5-slot Basic Rate BR/EDR packet.
- * This includes the access code, header, and payload.
- */
-#define BREDR_SYMBOLS_MAX       3125u
 
-/**
- * Maximum header+payload bits remaining after the 72-bit access code.
- * The PHY collection buffer stores only these post-access-code bits.
- */
-#define BREDR_BODY_BITS_MAX     (BREDR_SYMBOLS_MAX - BREDR_AC_BITS)
+// Number of bits in a BR/EDR access code (preamble + sync word + trailer = 4 + 64 + 4)
+#define BREDR_AC_BITS 72u
 
-/**
- * Maximum raw payload bits that may be retained in bredr_frame_t after the
- * 54-bit FEC-encoded header has been removed from the captured body.
- */
-#define BREDR_MAX_PAYLOAD_BITS  (BREDR_BODY_BITS_MAX - 54u)
+// Maximum retained on-air payload bits in a 5-slot Basic Rate packet.
+#define BR_MAX_AIR_PAYLOAD_BITS  2999u
 
-/**
- * Maximum payload bytes stored per packet for raw capture. This is larger
- * than the semantic DH5 user payload ceiling because PHY storage may retain
- * the full captured payload body before higher-layer decode narrows it.
- */
-#define BREDR_MAX_PAYLOAD_BYTES ((BREDR_MAX_PAYLOAD_BITS + 7u) / 8u)
+// Enough payload bytes to hold BR_MAX_AIR_PAYLOAD_BITS
+#define BR_MAX_AIR_PAYLOAD_BYTES ((BR_MAX_AIR_PAYLOAD_BITS + 7u) / 8u)
 
 /** Default maximum Hamming distance allowed in access-code matching. */
 #define BREDR_AC_ERRORS_DEFAULT    2u
@@ -124,13 +109,6 @@ extern "C"
 
 /** Default Check Initialization value — UAP used for inquiry packet HECs. */
 #define BREDR_DCI       0x00u
-
-/**
- * Number of bits in a BR/EDR access code (preamble + sync word = 4 + 64 + 4
- * trailer, but the sliding window detects the 64-bit sync word; the ring
- * buffer covers 72 bits to include preamble).
- */
-#define BREDR_AC_BITS    72u
 
 /**
  * Number of decimated IQ samples that span the access code.
@@ -154,8 +132,9 @@ extern "C"
  *
  * Populated by the processor after a complete packet has been collected.
  * The LAP is extracted from the access code sync word. The header is stored
- * as the raw 54-bit FEC-encoded field captured from the air. The payload is
- * stored in reception (air) order and has NOT been dewhitened.
+ * as the raw 54-bit FEC-encoded field captured from the air. The air payload
+ * is stored in reception order, has NOT been dewhitened, and is packed
+ * LSB-first within each byte (first received bit goes to bit 0).
  *
  * On-air packet layout (bits transmitted LSB-first):
  *  | Preamble (4 b) | Sync Word (64 b) | Trailer (4 b) |
@@ -179,16 +158,17 @@ typedef struct
      */
     uint64_t header_raw;
 
-    /* -- Raw payload ------------------------------------------------------- */
+    /* -- Air payload ------------------------------------------------------- */
 
     /**
-     * Payload bytes in reception order. Not dewhitened.
-     * Valid bytes: payload[0 .. bredr_frame_payload_bytes(frame)-1].
+     * On-air payload bytes in reception order. Not dewhitened.
+     * Packed LSB-first within each byte.
+     * Valid bytes: air_payload[0 .. bredr_frame_air_payload_bytes(frame)-1].
      */
-    uint8_t  payload[BREDR_MAX_PAYLOAD_BYTES];
+    uint8_t  air_payload[BR_MAX_AIR_PAYLOAD_BYTES];
 
-    /** Exact number of on-air payload bits captured into payload[]. */
-    unsigned int payload_bits;
+    /** Exact number of on-air payload bits captured into air_payload[]. */
+    unsigned int air_payload_bits;
 
     /**
      * Non-zero when this frame contains a header and payload.
@@ -199,9 +179,9 @@ typedef struct
 
 } bredr_frame_t;
 
-static inline unsigned int bredr_frame_payload_bytes(const bredr_frame_t *frame)
+static inline unsigned int bredr_frame_air_payload_bytes(const bredr_frame_t *frame)
 {
-    return frame ? ((frame->payload_bits + 7u) / 8u) : 0u;
+    return frame ? ((frame->air_payload_bits + 7u) / 8u) : 0u;
 }
 
 /* ---------------------------------------------------------------------------
@@ -279,16 +259,21 @@ typedef struct
     /** Trailer bits still to consume before collection begins (0–4). */
     unsigned int drain_count;
 
-    /* -- Symbol collection buffer ------------------------------------------ */
+    /* -- Bit collection buffers -------------------------------------------- */
 
     /**
-     * Packed collection buffer (LSB-first within each byte, air order).
-     * Holds the FEC-encoded header bits followed by payload bits.
-    * Sized to hold BREDR_BODY_BITS_MAX bits.
+     * Raw 54 FEC-encoded header bits as received from the air.
+     * Bit 0 = first received bit, bit 53 = last received bit.
      */
-    uint8_t  raw_symbols[(BREDR_BODY_BITS_MAX + 7u) / 8u];
+    uint64_t collected_header_raw;
 
-    /** Bits packed into raw_symbols so far. */
+    /** On-air payload bytes packed LSB-first within each byte. */
+    uint8_t  collected_air_payload[BR_MAX_AIR_PAYLOAD_BYTES];
+
+    /** Exact number of air payload bits captured so far. */
+    unsigned int collected_air_payload_bits;
+
+    /** Total body bits captured so far (54 header bits + air payload bits). */
     unsigned int bits_collected;
 
     /**

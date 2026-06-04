@@ -187,7 +187,6 @@ add_library(supertooth_service STATIC
     service/bredr_channel_processor.h
     service/receiver_session.c
     service/receiver_session.h
-    service/receiver_session_internal.h
     dsp/rssi_measurements.c
     dsp/rssi_measurements.h
     service/receiver_session_ble.c
