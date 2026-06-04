@@ -54,12 +54,13 @@ static void bredr_print_payload_preview(const bredr_frame_t *frame)
     }
 
     unsigned int show = air_payload_bytes < 32u ? air_payload_bytes : 32u;
-    printf("Payload      : %u bits (%u bytes)", frame->air_payload_bits, air_payload_bytes);
+    printf("Payload      :");
     for (unsigned int i = 0; i < show; i++)
     {
-        if (i % 16u == 0u)
-            printf("\n               ");
-        printf("%02X ", frame->air_payload[i]);
+        if (i != 0u && (i % 16u) == 0u)
+            printf("\n               %02X", frame->air_payload[i]);
+        else
+            printf(" %02X", frame->air_payload[i]);
     }
     if (air_payload_bytes > show)
         printf("...");
@@ -123,7 +124,11 @@ static void bredr_print_hex_line(const char *label,
     }
 
     for (unsigned int i = 0u; i < show; i++)
+    {
+        if (i != 0u && (i % 16u) == 0u)
+            printf("\n              ");
         printf(" %02X", data[i]);
+    }
     if (data_len > show)
         printf(" ...");
     printf("\n");
@@ -143,24 +148,27 @@ static void bredr_print_decoded_payload(const bredr_packet_t *packet)
     {
         const bredr_acl_payload_t *acl = &packet->payload.acl;
         unsigned int max_length = bredr_acl_max_user_payload_bytes(packet->header.type);
-        printf("LLID         : %s (%u)\n",
-               bredr_llid_name(acl->llid),
-               (unsigned int)(acl->llid & 0x03u));
+        uint8_t llid = (uint8_t)(acl->llid & 0x03u);
+        printf("LLID         : %u [%s]%s\n",
+               (unsigned int)llid,
+               bredr_llid_name(llid),
+               llid == 0u ? " (likely encrypted)" : "");
         printf("ACL FLOW     : %u\n", acl->flow & 1u);
         if (packet->limit == BREDR_DECODE_LIMIT_IMPOSSIBLE_ACL_LENGTH && max_length != 0u)
         {
-            printf("ACL Length   : %u bytes [impossible for %s, max %u]\n",
+            printf("ACL Length   : %u [impossible for %s] (likely encrypted)\n",
                    acl->length,
-                   bredr_packet_type_name(packet->header.type),
-                   max_length);
-            printf("             : likely E0-encrypted payload header, or HEC-ambiguous CLK1-6 (~3%% false match)\n");
+                   bredr_packet_type_name(packet->header.type));
         }
         else
             printf("ACL Length   : %u bytes\n", acl->length);
         if (acl->has_mic)
             printf("ACL MIC      : 0x%08X [%s]\n", acl->mic, acl->mic_ok ? "PASS" : "FAIL");
-        if (acl->crc_ok || acl->crc != 0u)
-            printf("ACL CRC      : 0x%04X [%s]\n", acl->crc, acl->crc_ok ? "PASS" : "FAIL");
+        if (acl->has_crc)
+            printf("ACL CRC      : 0x%04X [%s]%s\n",
+                   acl->crc,
+                   acl->crc_ok ? "PASS" : "FAIL",
+                   acl->crc_ok ? "" : " (likely encrypted)");
         if (packet->status == BREDR_DECODE_FULL_PAYLOAD)
             bredr_print_hex_line("ACL Payload", acl->user_payload, acl->length, 24u);
         break;
@@ -172,7 +180,8 @@ static void bredr_print_decoded_payload(const bredr_packet_t *packet)
         break;
     }
 
-    if (packet->limit != BREDR_DECODE_LIMIT_NONE)
+    if (packet->limit != BREDR_DECODE_LIMIT_NONE &&
+        packet->limit != BREDR_DECODE_LIMIT_IMPOSSIBLE_ACL_LENGTH)
         printf("Decode       : %s\n", bredr_decode_limit_desc(packet->limit));
 }
 
@@ -216,8 +225,8 @@ void bredr_print_packet_details(const bredr_frame_t *frame,
         {
             printf("\n[Decoded Header Info]\n");
             printf("HEC          : 0x%02X [PASS]\n", packet.header.hec);
-            printf("TYPE         : %s (%u)\n",
-                   bredr_packet_type_name(packet.header.type), packet.header.type & 0x0Fu);
+            printf("TYPE         : %u [%s]\n",
+                   packet.header.type & 0x0Fu, bredr_packet_type_name(packet.header.type));
             printf("LT_ADDR      : %u\n", packet.header.lt_addr & 0x07u);
             printf("FLOW         : %u\n", packet.header.flow & 1u);
             printf("ARQN         : %u\n", packet.header.arqn & 1u);
@@ -233,7 +242,8 @@ void bredr_print_packet_details(const bredr_frame_t *frame,
         if (!semantic_payload_ready)
         {
             bredr_print_payload_preview(frame);
-            if (packet.limit != BREDR_DECODE_LIMIT_NONE)
+            if (packet.limit != BREDR_DECODE_LIMIT_NONE &&
+                packet.limit != BREDR_DECODE_LIMIT_IMPOSSIBLE_ACL_LENGTH)
                 printf("Decode       : %s\n", bredr_decode_limit_desc(packet.limit));
             else if (decode_ok <= 0)
                 printf("Decode       : raw packet only\n");
@@ -248,7 +258,7 @@ void bredr_print_packet_details(const bredr_frame_t *frame,
             printf("UAP          : 0x%02X\n", pnet->uap);
         else
             printf("UAP          : 0x??\n");
-        printf("Tracking     : %d (%s)\n",
+        printf("Tracking     : %d [%s]\n",
                pnet->tracking_state, bredr_tracking_state_desc(pnet->tracking_state));
         if (pnet->clk_known)
             printf("CLK1-6       : %u\n", pnet->central_clk_1_6);

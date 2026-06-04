@@ -183,7 +183,8 @@ void ble_print_packet(const ble_packet_t *pkt)
         return;
 
     printf("[BLE Advertising Packet]\n");
-    printf("PDU Type : %s (%s)\n",
+    printf("PDU Type : %u [%s] (%s)\n",
+           (unsigned int)(pkt->pdu_type & 0x0Fu),
            ble_pdu_type_name(pkt->pdu_type),
            ble_pdu_type_desc(pkt->pdu_type));
 

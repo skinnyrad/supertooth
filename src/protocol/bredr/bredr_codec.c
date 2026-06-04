@@ -348,9 +348,32 @@ static int bredr_decode_header(const bredr_frame_t *frame,
     return out->hec_ok;
 }
 
+/*
+ * BR/EDR payload CRC-16 per BT Core Spec Vol 2, Part B, §7.1.1.
+ * Mirrors libbtbb's `crcgen`: register initialised with the bit-reversed UAP
+ * in the high byte; bits are consumed in air order (LSB-first within each
+ * byte of the packed buffer).
+ */
+static uint16_t bredr_payload_crc(const uint8_t *data,
+                                  unsigned int bit_count,
+                                  uint8_t uap)
+{
+    uint16_t reg = (uint16_t)((uint16_t)bredr_reverse_byte(uap) << 8);
+
+    for (unsigned int i = 0u; i < bit_count; i++)
+    {
+        uint8_t bit = read_packed_bit(data, i);
+        reg = (uint16_t)((reg >> 1) | (((reg & 0x0001u) ^ (bit & 0x01u)) << 15));
+        reg = (uint16_t)(reg ^ ((reg & 0x8000u) >> 5));
+        reg = (uint16_t)(reg ^ ((reg & 0x8000u) >> 12));
+    }
+    return reg;
+}
+
 static int bredr_parse_acl_payload(const uint8_t *payload,
                                    unsigned int payload_len,
                                    uint8_t type_code,
+                                   uint8_t uap,
                                    bredr_acl_payload_t *out,
                                    bredr_decode_limit_t *limit)
 {
@@ -406,6 +429,19 @@ static int bredr_parse_acl_payload(const uint8_t *payload,
     }
 
     memcpy(out->user_payload, payload + header_bytes, out->length);
+
+    // Check CRC
+    unsigned int data_bytes = (unsigned int)header_bytes + out->length;
+    if (payload_len >= data_bytes + 2u)
+    {
+        uint16_t computed = bredr_payload_crc(payload, data_bytes * 8u, uap);
+        uint16_t received = (uint16_t)(payload[data_bytes]
+                            | ((uint16_t)payload[data_bytes + 1u] << 8));
+        out->has_crc = 1u;
+        out->crc = received;
+        out->crc_ok = (uint8_t)(computed == received);
+    }
+    
 
     if (limit)
         *limit = BREDR_DECODE_LIMIT_NONE;
@@ -662,7 +698,7 @@ const char *bredr_llid_name(uint8_t llid)
     switch (llid)
     {
     case 0u:
-        return "Reserved";
+        return "Reserved for Future Use";
     case 1u:
         return "Continuation";
     case 2u:
@@ -725,6 +761,7 @@ int bredr_decode_frame(const bredr_frame_t *frame,
         if (!bredr_parse_acl_payload(decoded_payload,
                                      out->decoded_payload_bytes,
                                      type_code,
+                                     uap,
                                      &out->payload.acl,
                                      &out->limit))
         {

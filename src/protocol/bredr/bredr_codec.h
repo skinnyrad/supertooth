@@ -88,6 +88,7 @@ typedef struct
     uint8_t has_mic;
     uint32_t mic;
     uint8_t mic_ok;
+    uint8_t has_crc;
     uint16_t crc;
     uint8_t crc_ok;
 } bredr_acl_payload_t;
