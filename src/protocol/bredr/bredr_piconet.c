@@ -16,12 +16,12 @@
  * ±1 and ±2 are tried; the first match corrects the estimate.  Tracking
  * confidence is managed by tracking_state.
  *
- * Header unwhitening uses bredr_decode_header_bits() from bredr_phy.c/h,
+ * Header unwhitening uses bredr_decode_header_bits() from bredr_codec.c/h,
  * which holds the whitening tables (sourced from libbtbb's bluetooth_packet.c).
  */
 
 #include "bredr_piconet.h"
-#include "bredr_header_codec.h"
+#include "bredr_codec.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -31,45 +31,14 @@
  * RSSI averaging configuration
  * ---------------------------------------------------------------------------*/
 
-#define BREDR_RSSI_AVG_WINDOW_DEFAULT 16u
-
-static unsigned int g_rssi_avg_window = BREDR_RSSI_AVG_WINDOW_DEFAULT;
-static float g_rssi_avg_alpha = 2.0f / ((float)BREDR_RSSI_AVG_WINDOW_DEFAULT + 1.0f);
-static float g_rssi_avg_one_minus_alpha = 1.0f - (2.0f / ((float)BREDR_RSSI_AVG_WINDOW_DEFAULT + 1.0f));
-
-static float update_rssi_value(float current, int seen, float sample)
+static float update_rssi_value(float current, int seen, float sample,
+                               unsigned int window, float alpha,
+                               float one_minus_alpha)
 {
-    if (!seen || g_rssi_avg_window == 0u)
+    if (!seen || window == 0u)
         return sample;
 
-    return g_rssi_avg_alpha * sample + g_rssi_avg_one_minus_alpha * current;
-}
-
-/* ---------------------------------------------------------------------------
- * HEC verification for a given CLK1-6 and known UAP
- * ---------------------------------------------------------------------------*/
-
-/**
- * Returns 1 if clk6 + uap produce a header with matching HEC, 0 otherwise.
- *
- * Delegates FEC decode and unwhitening to bredr_decode_header_bits().
- * bredr_compute_hec() returns bit 7 = first transmitted; we assemble
- * received_hec with the same convention (bit 7 = bits[10]).
- */
-static int check_hec_for_clk6(const bredr_packet_t *pkt, uint8_t uap, int clk6)
-{
-    uint8_t bits[18];
-    bredr_decode_header_bits(pkt, (uint8_t)(clk6 & 0x3f), bits);
-
-    uint16_t hdr_data = 0;
-    for (int i = 0; i < 10; i++)
-        hdr_data |= (uint16_t)(bits[i] << i);
-
-    uint8_t received_hec = 0;
-    for (int i = 0; i < 8; i++)
-        received_hec |= (uint8_t)(bits[10 + i] << (7 - i));
-
-    return (bredr_compute_hec(hdr_data, uap) == received_hec);
+    return alpha * sample + one_minus_alpha * current;
 }
 
 /* ---------------------------------------------------------------------------
@@ -77,26 +46,28 @@ static int check_hec_for_clk6(const bredr_packet_t *pkt, uint8_t uap, int clk6)
  * ---------------------------------------------------------------------------*/
 
 /**
- * Verify the current CLK1-6 estimate against the incoming packet's header.
+ * Verify the current CLK1-6 estimate against the incoming frame's header.
  * Tries the expected CLK1-6 (derived from last-success rx_clk_1600 delta),
  * then ±1 and ±2.  Updates central_clk_1_6 and
  * last_successful_rx_clk_1600 on success. Increments tracking_state on
  * success (capped at 5), decrements on failure, and clears clk_known once
  * tracking_state reaches 0.
  */
-static int update_clock(bredr_piconet_t *pnet, const bredr_packet_t *pkt)
+static int update_clock(bredr_piconet_t *pnet,
+                        const bredr_frame_t *frame,
+                        uint32_t rx_clk_1600)
 {
-    uint32_t rx_clk_1600_delta = pkt->rx_clk_1600 - pnet->last_successful_rx_clk_1600;
+    uint32_t rx_clk_1600_delta = rx_clk_1600 - pnet->last_successful_rx_clk_1600;
     int expected_clk6 = (int)((pnet->central_clk_1_6 + rx_clk_1600_delta) & 0x3f);
 
     static const int offsets[] = {0, 1, -1, 2, -2};
     for (int k = 0; k < 5; k++)
     {
         int candidate = ((expected_clk6 + offsets[k]) + 64) % 64;
-        if (check_hec_for_clk6(pkt, pnet->uap, candidate))
+        if (bredr_hec_ok_for_clk6(frame, pnet->uap, (uint8_t)candidate))
         {
             pnet->central_clk_1_6 = (uint8_t)candidate;
-            pnet->last_successful_rx_clk_1600 = pkt->rx_clk_1600;
+            pnet->last_successful_rx_clk_1600 = rx_clk_1600;
             if (pnet->tracking_state < 5)
                 pnet->tracking_state++;
             pnet->clk_known = 1;
@@ -160,31 +131,20 @@ void bredr_piconet_set_uap_only(bredr_piconet_t *pnet, uint8_t uap)
     pnet->tracking_state = -1;
 }
 
-void bredr_piconet_set_rssi_averaging(unsigned int window)
-{
-    g_rssi_avg_window = window;
-    if (window == 0u)
-    {
-        g_rssi_avg_alpha = 1.0f;
-        g_rssi_avg_one_minus_alpha = 0.0f;
-    }
-    else
-    {
-        g_rssi_avg_alpha = 2.0f / ((float)window + 1.0f);
-        g_rssi_avg_one_minus_alpha = 1.0f - g_rssi_avg_alpha;
-    }
-}
-
 void bredr_piconet_add_packet(bredr_piconet_t *pnet,
-                              const decoded_packet_t *packet)
+                              const bredr_event_t *event,
+                              uint32_t rx_clk_1600,
+                              unsigned int rssi_window,
+                              float rssi_alpha,
+                              float rssi_one_minus_alpha)
 {
-    if (!pnet || !packet || packet->protocol != PROTO_BREDR)
+    if (!pnet || !event)
         return;
-    const bredr_packet_t *pkt = &packet->u.bredr;
-    const rx_metadata_t *meta = &packet->meta;
+    const bredr_frame_t *frame = &event->frame;
+    const rx_metadata_t *meta = &event->meta;
 
     /* Copy into ring buffer. */
-    pnet->queue[pnet->queue_head] = *packet;
+    pnet->queue[pnet->queue_head] = *event;
     pnet->queue_head = (pnet->queue_head + 1u) % BREDR_PICONET_QUEUE_SIZE;
     if (pnet->queue_fill < BREDR_PICONET_QUEUE_SIZE)
         pnet->queue_fill++;
@@ -192,8 +152,8 @@ void bredr_piconet_add_packet(bredr_piconet_t *pnet,
     pnet->total_packets++;
 
     if (pnet->total_packets == 1u)
-        pnet->first_seen = pkt->rx_clk_1600;
-    pnet->last_seen = pkt->rx_clk_1600;
+        pnet->first_seen = rx_clk_1600;
+    pnet->last_seen = rx_clk_1600;
 
     int has_active_track = (pnet->uap_found && pnet->clk_known && pnet->tracking_state > 0);
 
@@ -201,36 +161,43 @@ void bredr_piconet_add_packet(bredr_piconet_t *pnet,
     if (!has_active_track && !isnan(meta->rssi_dbr))
     {
         pnet->combined_rssi =
-            update_rssi_value(pnet->combined_rssi, pnet->combined_rssi_seen, meta->rssi_dbr);
+            update_rssi_value(pnet->combined_rssi, pnet->combined_rssi_seen, meta->rssi_dbr,
+                              rssi_window, rssi_alpha, rssi_one_minus_alpha);
         pnet->combined_rssi_seen = 1;
     }
 
     /* Directional RSSI accumulation requires active track + header packet. */
-    if (!has_active_track || !pkt->has_header)
+    if (!has_active_track || !frame->has_header)
         return;
 
-    /* Update per-role RSSI only when current packet passes HEC under tracking. */
+    /* Update per-role RSSI only when current frame passes HEC under tracking. */
     int hec_ok = 0;
-    if (pkt->ac_errors <= 1u)
-        hec_ok = update_clock(pnet, pkt);
+    if (frame->ac_errors <= 1u)
+        hec_ok = update_clock(pnet, frame, rx_clk_1600);
     if (!hec_ok || isnan(meta->rssi_dbr))
         return;
 
-    /* rx_clk_1600 is slot clock (CLKN >> 1), so bit0 == CLK1 parity.
-     * Master transmits when CLK1 == 0, slave when CLK1 == 1. */
-    if ((pkt->rx_clk_1600 & 1u) == 0u)
+    uint8_t packet_clk6 = pnet->central_clk_1_6;
+
+    /* Direction comes from the recovered central clock for this packet.
+     * The local receive timeline is only used to recover that clock, not to
+     * classify packet role directly. Master transmits when CLK1 == 0 and
+     * slave transmits when CLK1 == 1. */
+    if ((packet_clk6 & 1u) == 0u)
     {
         pnet->master_rssi =
-            update_rssi_value(pnet->master_rssi, pnet->master_rssi_seen, meta->rssi_dbr);
+            update_rssi_value(pnet->master_rssi, pnet->master_rssi_seen, meta->rssi_dbr,
+                              rssi_window, rssi_alpha, rssi_one_minus_alpha);
         pnet->master_rssi_seen = 1;
     }
     else
     {
         uint8_t bits[18];
-        bredr_decode_header_bits(pkt, pnet->central_clk_1_6, bits);
+        bredr_decode_header_bits(frame, packet_clk6, bits);
         uint8_t lt = (bits[0]) | (uint8_t)(bits[1] << 1) | (uint8_t)(bits[2] << 2);
         pnet->slave_rssi[lt] =
-            update_rssi_value(pnet->slave_rssi[lt], pnet->slave_rssi_seen[lt], meta->rssi_dbr);
+            update_rssi_value(pnet->slave_rssi[lt], pnet->slave_rssi_seen[lt], meta->rssi_dbr,
+                              rssi_window, rssi_alpha, rssi_one_minus_alpha);
         pnet->slave_rssi_seen[lt] = 1;
     }
 }

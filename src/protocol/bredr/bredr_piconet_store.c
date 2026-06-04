@@ -4,11 +4,12 @@
  */
 
 #include "bredr_piconet_store.h"
-#include "bredr_header_codec.h"
-#include "bredr_phy.h"
+#include "bredr_codec.h"
+#include "bredr_bitstream_decoder.h"
 #include "bredr_recovery.h"
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
 /* ---------------------------------------------------------------------------
@@ -30,30 +31,6 @@ struct bredr_piconet_store_entry
     uint32_t last_clkn;
     int has_last_clkn;
 };
-
-/**
- * Returns 1 if clk6 + uap produce a header with matching HEC, 0 otherwise.
- */
-static int packet_hec_ok_for_clk6(const bredr_packet_t *pkt,
-                                  uint8_t uap,
-                                  uint8_t clk6)
-{
-    if (!pkt || !pkt->has_header)
-        return 0;
-
-    uint8_t bits[18];
-    bredr_decode_header_bits(pkt, (uint8_t)(clk6 & 0x3fu), bits);
-
-    uint16_t hdr_data = 0;
-    for (int i = 0; i < 10; i++)
-        hdr_data |= (uint16_t)(bits[i] << i);
-
-    uint8_t received_hec = 0;
-    for (int i = 0; i < 8; i++)
-        received_hec |= (uint8_t)(bits[10 + i] << (7 - i));
-
-    return bredr_compute_hec(hdr_data, uap) == received_hec;
-}
 
 /* ---------------------------------------------------------------------------
  * Store helpers
@@ -90,6 +67,8 @@ static bredr_piconet_store_entry_t *create_entry(bredr_piconet_store_t *store,
         return NULL;
 
     bredr_recovery_state_t *recovery = bredr_recovery_state_create(lap);
+    if (!recovery)
+        fprintf(stderr, "[bredr_piconet_store] OOM: UAP recovery disabled for LAP 0x%06x\n", lap);
 
     bredr_piconet_init(pnet, lap);
 
@@ -104,6 +83,27 @@ static bredr_piconet_store_entry_t *create_entry(bredr_piconet_store_t *store,
 /* ---------------------------------------------------------------------------
  * UAP/clock acquisition
  * ---------------------------------------------------------------------------*/
+
+static uint32_t sample_to_ticks(uint64_t start_sample,
+                                unsigned int sample_rate_hz,
+                                unsigned int ticks_per_second)
+{
+    if (sample_rate_hz == 0u)
+        return 0u;
+
+    uint64_t num = start_sample * (uint64_t)ticks_per_second + (uint64_t)(sample_rate_hz / 2u);
+    return (uint32_t)(num / (uint64_t)sample_rate_hz);
+}
+
+static uint32_t sample_to_rx_clk_1600(uint64_t start_sample, unsigned int sample_rate_hz)
+{
+    return sample_to_ticks(start_sample, sample_rate_hz, 1600u);
+}
+
+static uint32_t sample_to_clkn(uint64_t start_sample, unsigned int sample_rate_hz)
+{
+    return sample_to_ticks(start_sample, sample_rate_hz, 3200u);
+}
 
 /** Maximum age (rx_clk_1600 ticks) for historical packets used in CLK1-6
  *  narrowing.  625 µs × 8000 ≈ 5 seconds. */
@@ -127,16 +127,16 @@ static bredr_piconet_store_entry_t *create_entry(bredr_piconet_store_t *store,
  * @return            Number of surviving candidates.
  */
 static int narrow_clk6_candidates(const bredr_piconet_t *pnet,
-                                  const decoded_packet_t *cur_packet,
+                                  const bredr_event_t *cur_event,
+                                  unsigned int sample_rate_hz,
                                   uint8_t uap,
                                   int candidates[64],
                                   int n)
 {
-    const bredr_packet_t *cur_pkt = &cur_packet->u.bredr;
     if (n <= 1 || pnet->queue_fill < 2)
         return n;
 
-    uint32_t cur_clk = cur_pkt->rx_clk_1600;
+    uint32_t cur_clk = sample_to_rx_clk_1600(cur_event->meta.start_sample, sample_rate_hz);
 
     /* Iterate backwards through the ring buffer, starting at the packet just
      * before cur_pkt (index queue_head - 2 wrapping around). */
@@ -144,27 +144,28 @@ static int narrow_clk6_candidates(const bredr_piconet_t *pnet,
     {
         unsigned int idx =
             (pnet->queue_head - 1u - i + 2u * BREDR_PICONET_QUEUE_SIZE) % BREDR_PICONET_QUEUE_SIZE;
-        const decoded_packet_t *hist_packet = &pnet->queue[idx];
-        const bredr_packet_t *hist = &hist_packet->u.bredr;
+        const bredr_event_t *hist_event = &pnet->queue[idx];
+        const bredr_frame_t *hist_frame = &hist_event->frame;
+        uint32_t hist_clk = sample_to_rx_clk_1600(hist_event->meta.start_sample, sample_rate_hz);
 
         /* Stop if this packet is too old. */
-        if ((cur_clk - hist->rx_clk_1600) > CLK1_6_HISTORY_CUTOFF_CLK1600)
+        if ((cur_clk - hist_clk) > CLK1_6_HISTORY_CUTOFF_CLK1600)
             break;
 
         /* Skip packets without a decodable header inside configured AC tolerance. */
-        if (!hist->has_header || hist->ac_errors > BREDR_AC_ERRORS_DEFAULT)
+        if (!hist_frame->has_header || hist_frame->ac_errors > BREDR_AC_ERRORS_DEFAULT)
             continue;
 
         /* CLK1-6 advances one tick per rx_clk_1600 slot.  The CLK1-6 at the
          * historical packet is: (c_current - delta) mod 64. */
-        uint32_t delta_mod64 = (cur_clk - hist->rx_clk_1600) & 0x3Fu;
+        uint32_t delta_mod64 = (cur_clk - hist_clk) & 0x3Fu;
 
         int j = 0;
         for (int k = 0; k < n; k++)
         {
             uint8_t c_at_hist =
                 (uint8_t)((candidates[k] - (int)delta_mod64 + 64) & 0x3F);
-            if (packet_hec_ok_for_clk6(hist, uap, c_at_hist))
+            if (bredr_hec_ok_for_clk6(hist_frame, uap, c_at_hist))
                 candidates[j++] = candidates[k];
         }
         n = j;
@@ -177,13 +178,15 @@ static int narrow_clk6_candidates(const bredr_piconet_t *pnet,
 }
 
 static void try_uap_acquisition(bredr_piconet_store_entry_t *entry,
-                                const decoded_packet_t *packet,
-                                uint32_t clkn)
+                                const bredr_event_t *event,
+                                uint32_t clkn,
+                                uint32_t rx_clk_1600,
+                                unsigned int sample_rate_hz)
 {
-    const bredr_packet_t *pkt = &packet->u.bredr;
+    const bredr_frame_t *frame = &event->frame;
     bredr_piconet_t *pnet = entry->pnet;
 
-    if (!pnet || !pkt->has_header || pkt->ac_errors > BREDR_AC_ERRORS_DEFAULT)
+    if (!pnet || !frame->has_header || frame->ac_errors > BREDR_AC_ERRORS_DEFAULT)
         return;
     if (pnet->uap_found && pnet->clk_known)
         return;
@@ -191,7 +194,7 @@ static void try_uap_acquisition(bredr_piconet_store_entry_t *entry,
         return;
 
     bredr_recovery_result_t result = {0};
-    if (bredr_recovery_process_packet(entry->recovery, pkt, (int)packet->meta.channel_index, clkn, &result))
+    if (bredr_recovery_process_packet(entry->recovery, frame, (int)event->meta.channel_index, clkn, &result))
     {
         uint8_t uap = result.uap;
         uint8_t btbb_clk6 = result.clk6_hint;
@@ -203,18 +206,18 @@ static void try_uap_acquisition(bredr_piconet_store_entry_t *entry,
         int valid_n = 0;
         for (int c = 0; c < 64; c++)
         {
-            if (packet_hec_ok_for_clk6(pkt, uap, (uint8_t)c))
+            if (bredr_hec_ok_for_clk6(frame, uap, (uint8_t)c))
                 valid_clk[valid_n++] = c;
         }
 
         /* Narrow the candidates using historical packets in the ring buffer. */
-        valid_n = narrow_clk6_candidates(pnet, packet, uap, valid_clk, valid_n);
+        valid_n = narrow_clk6_candidates(pnet, event, sample_rate_hz, uap, valid_clk, valid_n);
 
         if (valid_n == 1)
         {
             /* Unambiguous — use directly. */
             bredr_piconet_set_uap(pnet, uap, (uint8_t)valid_clk[0],
-                                  pkt->rx_clk_1600);
+                                  rx_clk_1600);
         }
         else if (valid_n > 1)
         {
@@ -235,7 +238,7 @@ static void try_uap_acquisition(bredr_piconet_store_entry_t *entry,
                     best = valid_clk[i];
                 }
             }
-            bredr_piconet_set_uap(pnet, uap, (uint8_t)best, pkt->rx_clk_1600);
+            bredr_piconet_set_uap(pnet, uap, (uint8_t)best, rx_clk_1600);
         }
         /* valid_n == 0: UAP may be wrong — leave state unchanged and let btbb
          * accumulate more packets before trying again. */
@@ -245,6 +248,25 @@ static void try_uap_acquisition(bredr_piconet_store_entry_t *entry,
 /* ---------------------------------------------------------------------------
  * Public API
  * ---------------------------------------------------------------------------*/
+
+void bredr_piconet_store_set_rssi_averaging(bredr_piconet_store_t *store,
+                                            unsigned int window)
+{
+    if (!store)
+        return;
+
+    store->rssi_avg_window = window;
+    if (window == 0u)
+    {
+        store->rssi_avg_alpha = 1.0f;
+        store->rssi_avg_one_minus_alpha = 0.0f;
+    }
+    else
+    {
+        store->rssi_avg_alpha = 2.0f / ((float)window + 1.0f);
+        store->rssi_avg_one_minus_alpha = 1.0f - store->rssi_avg_alpha;
+    }
+}
 
 void bredr_piconet_store_init(bredr_piconet_store_t *store)
 {
@@ -257,6 +279,7 @@ void bredr_piconet_store_init(bredr_piconet_store_t *store)
         store->capacity, sizeof(*store->entries));
 
     bredr_recovery_global_init(BREDR_AC_ERRORS_DEFAULT);
+    bredr_piconet_store_set_rssi_averaging(store, 16u);
 }
 
 void bredr_piconet_store_free(bredr_piconet_store_t *store)
@@ -275,14 +298,16 @@ void bredr_piconet_store_free(bredr_piconet_store_t *store)
 }
 
 bredr_piconet_t *bredr_piconet_store_add_packet(bredr_piconet_store_t *store,
-                                                const decoded_packet_t *packet,
-                                                uint32_t clkn)
+                                                const bredr_event_t *event,
+                                                unsigned int sample_rate_hz)
 {
-    if (!store || !packet || packet->protocol != PROTO_BREDR || !store->entries)
+    if (!store || !event || !store->entries || sample_rate_hz == 0u)
         return NULL;
-    const bredr_packet_t *pkt = &packet->u.bredr;
+    const bredr_frame_t *frame = &event->frame;
+    uint32_t clkn = sample_to_clkn(event->meta.start_sample, sample_rate_hz);
+    uint32_t rx_clk_1600 = sample_to_rx_clk_1600(event->meta.start_sample, sample_rate_hz);
 
-    uint32_t lap = pkt->lap & 0xFFFFFFu;
+    uint32_t lap = frame->lap & 0xFFFFFFu;
 
     bredr_piconet_store_entry_t *entry = find_entry(store, lap);
     if (!entry)
@@ -307,8 +332,11 @@ bredr_piconet_t *bredr_piconet_store_add_packet(bredr_piconet_store_t *store,
     entry->last_clkn = clkn;
     entry->has_last_clkn = 1;
 
-    bredr_piconet_add_packet(entry->pnet, packet);
-    try_uap_acquisition(entry, packet, clkn);
+    bredr_piconet_add_packet(entry->pnet, event, rx_clk_1600,
+                             store->rssi_avg_window,
+                             store->rssi_avg_alpha,
+                             store->rssi_avg_one_minus_alpha);
+    try_uap_acquisition(entry, event, clkn, rx_clk_1600, sample_rate_hz);
 
     return entry->pnet;
 }

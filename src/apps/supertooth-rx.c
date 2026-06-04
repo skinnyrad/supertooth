@@ -16,7 +16,7 @@
  * -------------------------------------------------------------------------*/
 
 typedef void (*packet_formatter_fn)(unsigned long packet_no,
-                                    const decoded_packet_t *packet,
+                                    const bredr_event_t *event,
                                     const receiver_bredr_piconet_snapshot_t *pnet);
 
 static app_output_mode_t g_output_mode = APP_OUTPUT_MODE_FULL;
@@ -68,11 +68,11 @@ static unsigned int current_master_clock_mhz(void)
 }
 
 static void print_packet_full(unsigned long packet_no,
-                              const decoded_packet_t *packet,
+                              const bredr_event_t *event,
                               const receiver_bredr_piconet_snapshot_t *pnet)
 {
-    const bredr_packet_t *pkt = &packet->u.bredr;
-    const rx_metadata_t *meta = &packet->meta;
+    const bredr_frame_t *frame = &event->frame;
+    const rx_metadata_t *meta = &event->meta;
     printf("\n------------------ Packet #%lu --------------------\n", packet_no);
     printf("[RX Info]\n");
     printf("Sample Index : %" PRIu64 " (%u Msps master clock)\n",
@@ -81,25 +81,25 @@ static void print_packet_full(unsigned long packet_no,
     printf("Frequency    : %u MHz (Channel %u)\n",
            (unsigned int)(meta->center_frequency_hz / 1000000u), meta->channel_index);
     printf("RSSI         : %.2f dBr\n", meta->rssi_dbr);
-    bredr_print_packet_details(pkt, pnet);
+    bredr_print_packet_details(frame, pnet, meta, current_master_clock_mhz() * 1000000u);
 
     printf("--------------------------------------------------\n");
 }
 
 static void print_packet_summary(unsigned long packet_no,
-                                 const decoded_packet_t *packet,
+                                 const bredr_event_t *event,
                                  const receiver_bredr_piconet_snapshot_t *pnet)
 {
-    bredr_print_packet_summary_line(packet_no, &packet->u.bredr, pnet, &packet->meta);
+    bredr_print_packet_summary_line(packet_no, &event->frame, pnet, &event->meta);
 }
 
 static void print_packet_rssi(unsigned long packet_no,
-                              const decoded_packet_t *packet,
+                              const bredr_event_t *event,
                               const receiver_bredr_piconet_snapshot_t *pnet)
 {
     (void)pnet;
-    const bredr_packet_t *pkt = &packet->u.bredr;
-    const rx_metadata_t *meta = &packet->meta;
+    const bredr_frame_t *frame = &event->frame;
+    const rx_metadata_t *meta = &event->meta;
     size_t count = receiver_session_bredr_piconet_count(g_session);
     const receiver_bredr_piconet_snapshot_t **ordered =
         (const receiver_bredr_piconet_snapshot_t **)malloc(sizeof(*ordered) * (count > 0u ? count : 1u));
@@ -120,7 +120,7 @@ static void print_packet_rssi(unsigned long packet_no,
     }
     qsort(ordered, used, sizeof(*ordered), piconet_lap_cmp);
 
-    bredr_print_rssi_snapshot(packet_no, pkt, meta,
+    bredr_print_rssi_snapshot(packet_no, frame, meta,
                               (const bredr_piconet_snapshot_t *const *)ordered,
                               used, current_master_clock_mhz());
     for (size_t i = 0; i < used; i++)
@@ -229,14 +229,14 @@ static void print_usage(const char *argv0)
     fprintf(stderr, "  %-30s Print drop/debug diagnostics\n", "-d, --debug");
 }
 
-static void handle_bredr_packet(const decoded_packet_t *packet,
+static void handle_bredr_packet(const bredr_event_t *event,
                                 const receiver_bredr_piconet_snapshot_t *pnet,
                                 void *user)
 {
     (void)user;
     app_output_lock();
     g_total_packets++;
-    output_mode_formatter(g_output_mode)(g_total_packets, packet, pnet);
+    output_mode_formatter(g_output_mode)(g_total_packets, event, pnet);
     fflush(stdout);
     app_output_unlock();
 }
@@ -400,21 +400,9 @@ int main(int argc, char *argv[])
     printf("  Total bits     : %" PRIu64 "\n", stats.total_bits);
     printf("  Header packets : %lu\n", stats.header_packets);
     printf("  ID packets     : %lu\n", stats.id_packets);
-    printf("  Dropped blocks : %lu\n", stats.dropped_blocks);
     if (g_debug)
-    {
-        unsigned long ch_drops_total = 0ul;
-        for (unsigned int i = 0; i < stats.channel_count; i++)
-            ch_drops_total += stats.channel_dropped_blocks[i];
-        printf("  Channel queue drops (total): %lu\n", ch_drops_total);
-        for (unsigned int i = 0; i < stats.channel_count; i++)
-        {
-            if (stats.channel_dropped_blocks[i] > 0ul)
-                printf("    ch=%02u dropped=%lu\n",
-                       g_bottom_bredr_channel + i,
-                       stats.channel_dropped_blocks[i]);
-        }
-    }
+        printf("  Dropped blocks : %lu\n",
+               receiver_session_dispatcher_dropped_blocks(g_session));
     printf("\n");
     print_session_piconets();
     receiver_session_destroy(g_session);

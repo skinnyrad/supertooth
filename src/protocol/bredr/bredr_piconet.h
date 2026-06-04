@@ -7,7 +7,7 @@
  * --------
  * A `bredr_piconet_t` represents a single observed Bluetooth piconet,
  * identified by its 24-bit LAP.  It maintains a circular ring buffer of the
- * 1024 most recently received packets.
+ * 1024 most recently received BR/EDR events.
  *
  * UAP and initial clock resolution is delegated entirely to libbtbb by the
  * calling application.  Once the UAP and an initial CLK1-6 value are known,
@@ -41,8 +41,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#include "packet_models.h"
-#include "bredr_phy.h"
+#include "receive_event_models.h"
+#include "bredr_bitstream_decoder.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -130,8 +130,8 @@ extern "C"
 
         /* -- Ring buffer -------------------------------------------------------- */
 
-        /** Circular queue of the 1024 most recently received decoded packets. */
-        decoded_packet_t queue[BREDR_PICONET_QUEUE_SIZE];
+        /** Circular queue of the 1024 most recently received BR/EDR events. */
+        bredr_event_t queue[BREDR_PICONET_QUEUE_SIZE];
 
         /** Index of the next slot to overwrite (0 … QUEUE_SIZE-1). */
         unsigned int queue_head;
@@ -168,27 +168,31 @@ extern "C"
     void bredr_piconet_init(bredr_piconet_t *pnet, uint32_t lap);
 
     /**
-     * @brief Add a received packet to the piconet ring buffer.
+    * @brief Add a received event to the piconet ring buffer.
      *
-     * Copies the packet into the ring buffer (overwriting the oldest entry once
+    * Copies the event into the ring buffer (overwriting the oldest entry once
      * full) and updates first_seen and last_seen.
      *
-     * If the piconet is in clock-tracking mode (uap_found && clk_known) and the
-     * packet carries a clean decoded header (has_header != 0, ac_errors == 0),
+    * If the piconet is in clock-tracking mode (uap_found && clk_known) and the
+    * event carries a clean header frame (has_header != 0, ac_errors == 0),
      * the central CLK1-6 estimate is verified and corrected by trying expected,
      * ±1, ±2
      * candidates using
      * the known UAP's HEC.
      *
-     * If packet metadata includes a valid RSSI value and the clock is known,
+    * If event metadata includes a valid RSSI value and the clock is known,
      * the latest role RSSI is updated: master (CLK1 == 0) or slave
      * (CLK1 == 1, indexed by LT_ADDR).
      *
      * @param pnet  Must not be NULL and must have been initialised.
-    * @param packet Decoded packet to add. Must not be NULL and must be BR/EDR.
+    * @param event BR/EDR event to add. Must not be NULL.
      */
     void bredr_piconet_add_packet(bredr_piconet_t *pnet,
-                                  const decoded_packet_t *packet);
+                            const bredr_event_t *event,
+                            uint32_t rx_clk_1600,
+                            unsigned int rssi_window,
+                            float rssi_alpha,
+                            float rssi_one_minus_alpha);
 
     /**
      * @brief Record the UAP and initial CLK1-6, as solved by libbtbb.
@@ -217,18 +221,6 @@ extern "C"
      */
     void bredr_piconet_set_uap_only(bredr_piconet_t *pnet, uint8_t uap);
 
-    /**
-     * @brief Configure exponential RSSI averaging for piconet RSSI fields.
-     *
-     * Applies to combined, master, and slave RSSI values maintained by
-     * bredr_piconet_add_packet().
-     *
-     * Averaging uses an EMA with alpha = 2 / (window + 1). For window=0,
-     * averaging is disabled and values are replaced by each new sample.
-     *
-     * @param window  EMA window in packets. 0 disables averaging.
-     */
-    void bredr_piconet_set_rssi_averaging(unsigned int window);
 
 #ifdef __cplusplus
 }

@@ -8,7 +8,7 @@
 
 #include <stdint.h>
 
-#include "bredr_phy.h"
+#include "bredr_bitstream_decoder.h"
 #include "bredr_recovery.h"
 
 #ifdef __cplusplus
@@ -24,7 +24,7 @@ typedef struct
     void (*state_destroy)(bredr_recovery_backend_state_t *state);
     void (*state_reset)(bredr_recovery_backend_state_t *state, uint32_t lap);
     int (*process_packet)(bredr_recovery_backend_state_t *state,
-                          const bredr_packet_t *pkt,
+                          const bredr_frame_t *frame,
                           int channel,
                           uint32_t clkn,
                           bredr_recovery_result_t *out);

@@ -6,7 +6,7 @@
 #include <inttypes.h>
 #include "app_common.h"
 #include "ble_display.h"
-#include "ble_phy.h"
+#include "ble_bitstream_decoder.h"
 #include "receiver_session.h"
 
 static unsigned long g_packet_count = 0;
@@ -61,10 +61,10 @@ static void print_usage(const char *argv0)
 }
 
 static void print_ble_packet_full(unsigned long packet_no,
-                                  const decoded_packet_t *packet)
+                                  const ble_event_t *event)
 {
-    const ble_packet_t *pkt = &packet->u.ble;
-    const rx_metadata_t *meta = &packet->meta;
+    const rx_metadata_t *meta = &event->meta;
+    ble_packet_t packet;
     printf("\n------------------ Packet #%lu --------------------\n", packet_no);
     printf("[RX Info]\n");
     printf("Sample Index : %" PRIu64 " (%u Msps master clock)\n",
@@ -74,26 +74,43 @@ static void print_ble_packet_full(unsigned long packet_no,
            (unsigned int)(meta->center_frequency_hz / 1000000u), meta->channel_index);
     printf("RSSI         : %.2f dBr\n", meta->rssi_dbr);
     printf("\n");
-    ble_print_packet(pkt);
+    if (ble_decode_frame(&event->frame, meta->channel_index, &packet) == 0)
+        ble_print_packet(&packet);
+    else
+        printf("[BLE Decode Error]\n");
     printf("--------------------------------------------------\n");
 }
 
 static void print_ble_packet_summary(unsigned long packet_no,
-                                     const decoded_packet_t *packet)
+                                     const ble_event_t *event)
 {
-    ble_print_packet_summary_line(packet_no, &packet->u.ble, &packet->meta);
+    ble_packet_t packet;
+    if (ble_decode_frame(&event->frame, event->meta.channel_index, &packet) == 0)
+    {
+        ble_print_packet_summary_line(packet_no, &packet, &event->meta);
+        return;
+    }
+
+    printf("pkt=%-6lu type=BLE pdu=%-14s ch=%02u addr=%s len=%-3u crc=%s rssi=%.1f\n",
+           packet_no,
+           "DECODE_FAIL",
+           event->meta.channel_index,
+           "--",
+           0u,
+           "FAIL",
+           event->meta.rssi_dbr);
 }
 
-static void handle_ble_packet(const decoded_packet_t *packet,
-                             void *user)
+static void handle_ble_packet(const ble_event_t *event,
+                              void *user)
 {
     (void)user;
     app_output_lock();
     unsigned long packet_no = ++g_packet_count;
     if (g_output_mode == APP_OUTPUT_MODE_SUMMARY)
-        print_ble_packet_summary(packet_no, packet);
+        print_ble_packet_summary(packet_no, event);
     else
-        print_ble_packet_full(packet_no, packet);
+        print_ble_packet_full(packet_no, event);
     fflush(stdout);
     app_output_unlock();
 }
@@ -162,7 +179,6 @@ int main(int argc, char *argv[])
         .on_packet = handle_ble_packet,
         .user = NULL,
     };
-    receiver_ble_stats_t stats;
     g_session = receiver_session_create();
     if (!g_session)
     {
@@ -173,7 +189,7 @@ int main(int argc, char *argv[])
     printf("Monitoring BLE Channel %u (%.3f GHz) for advertising packets...\n",
            g_ble_channel, (double)g_ble_freq_hz / 1e9);
     printf("Press Ctrl+C to exit\n\n");
-    int result = receiver_session_run_ble(g_session, &config, &callbacks, &stats);
+        int result = receiver_session_run_ble(g_session, &config, &callbacks);
     receiver_session_destroy(g_session);
     g_session = NULL;
     if (result != 0)
@@ -188,10 +204,7 @@ int main(int argc, char *argv[])
                                 sizeof(s_output_modes) / sizeof(s_output_modes[0])));
     printf("  Debug mode     : %s\n", g_debug ? "enabled" : "disabled");
     printf("  BLE channel    : %u (%.3f MHz)\n", g_ble_channel, (double)g_ble_freq_hz / 1e6);
-    printf("  Total samples  : %" PRIu64 "\n", stats.total_samples);
     printf("  Total packets  : %lu\n", g_packet_count);
-    printf("\n=== Debug Summary ===\n");
-    printf("  Truncated callback blocks : %lu\n", stats.truncated_callback_blocks);
 
     return 0;
 }

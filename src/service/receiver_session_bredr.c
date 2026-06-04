@@ -1,31 +1,25 @@
-#include "receiver_dsp.h"
+#include "bredr_channel_processor.h"
+#include "radio_common.h"
 
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+#include <time.h>
 
 static void *receiver_bredr_worker(void *arg)
 {
-    receiver_bredr_channel_ctx_t *ctx = (receiver_bredr_channel_ctx_t *)arg;
+    bredr_channel_processor_t *ctx = (bredr_channel_processor_t *)arg;
     receiver_session_t *session = ctx->session;
     for (;;)
     {
-        pthread_mutex_lock(&ctx->queue_mutex);
-        while (!session->bredr_shutdown_requested && ctx->block_count == 0u)
-            pthread_cond_wait(&ctx->queue_cv, &ctx->queue_mutex);
-        if (session->bredr_shutdown_requested)
-        {
-            pthread_mutex_unlock(&ctx->queue_mutex);
+        sample_block_t *block = NULL;
+        if (sample_reader_wait_pop(&ctx->reader,
+                                   &session->bredr_shutdown_requested,
+                                   &block) != 0)
             break;
-        }
-        unsigned int block_idx = ctx->block_idx_ring[ctx->block_read_idx];
-        ctx->block_read_idx = (ctx->block_read_idx + 1u) % RECEIVER_BREDR_CHANNEL_RING_SIZE;
-        ctx->block_count--;
-        pthread_mutex_unlock(&ctx->queue_mutex);
 
-        receiver_bredr_process_channel(ctx, &session->bredr_block_pool[block_idx]);
-        __atomic_sub_fetch(&session->bredr_block_pool[block_idx].refcount, 1u, __ATOMIC_ACQ_REL);
+        receiver_bredr_channel_processor_process(ctx, block);
+        sample_block_release(block);
     }
     return NULL;
 }
@@ -53,11 +47,7 @@ static void receiver_bredr_stop_thread_pool(receiver_session_t *session)
 {
     session->bredr_shutdown_requested = 1u;
     for (unsigned int i = 0; i < session->bredr_worker_count; i++)
-    {
-        pthread_mutex_lock(&session->bredr_ctx[i].queue_mutex);
-        pthread_cond_signal(&session->bredr_ctx[i].queue_cv);
-        pthread_mutex_unlock(&session->bredr_ctx[i].queue_mutex);
-    }
+        sample_reader_signal(&session->bredr_ctx[i].reader);
     for (unsigned int i = 0; i < session->bredr_worker_count; i++)
         pthread_join(session->bredr_worker_threads[i], NULL);
     free(session->bredr_worker_threads);
@@ -76,46 +66,59 @@ int receiver_session_run_bredr(receiver_session_t *session,
 
     receiver_bredr_session_init(session, config, callbacks);
 
-    if (receiver_bredr_setup_channel_ctx(session) != 0)
+    if (receiver_bredr_channel_processor_setup(session) != 0)
     {
         bredr_piconet_store_free(&session->bredr_store);
-        receiver_bredr_destroy_channel_ctx(session);
+        receiver_bredr_channel_processor_destroy(session);
         return -1;
     }
     if (receiver_bredr_init_thread_pool(session) != 0)
     {
         if (session->bredr_worker_threads)
             receiver_bredr_stop_thread_pool(session);
-        receiver_bredr_destroy_channel_ctx(session);
+        receiver_bredr_channel_processor_destroy(session);
         bredr_piconet_store_free(&session->bredr_store);
         return -1;
     }
 
-    hackrf_device *device = NULL;
-    int result = hackrf_connect(&device);
-    if (result == HACKRF_SUCCESS)
+    radio_device_t *device = NULL;
+    int result = radio_open(&device, RADIO_DEVICE_HACKRF,
+                            &session->sample_dispatcher, session->debug);
+    if (result == RADIO_SUCCESS)
     {
-        hackrf_config_t radio_config = {
+        radio_stream_config_t radio_config = {
             .lo_freq_hz = session->bredr_lo_freq_hz,
             .sample_rate = session->bredr_sample_rate,
             .lna_gain = RECEIVER_BREDR_LNA_GAIN,
             .vga_gain = RECEIVER_BREDR_VGA_GAIN,
         };
-        result = hackrf_configure(device, &radio_config);
-        if (result == HACKRF_SUCCESS)
-            result = hackrf_start_rx(device, receiver_bredr_rx_cb, session);
-        if (result == HACKRF_SUCCESS)
+        result = radio_configure(device, &radio_config);
+        if (result == RADIO_SUCCESS)
+            result = radio_start_rx(device);
+        if (result == RADIO_SUCCESS)
         {
+            /* Block until receiver_session_request_stop() signals stop_cv. */
+            pthread_mutex_lock(&session->stop_mutex);
             while (!session->stop_requested)
-                sleep(1);
-            hackrf_stop_rx(device);
+            {
+                struct timespec ts;
+                clock_gettime(CLOCK_REALTIME, &ts);
+                ts.tv_nsec += 200000000L;
+                if (ts.tv_nsec >= 1000000000L)
+                {
+                    ts.tv_sec++;
+                    ts.tv_nsec -= 1000000000L;
+                }
+                pthread_cond_timedwait(&session->stop_cv, &session->stop_mutex, &ts);
+            }
+            pthread_mutex_unlock(&session->stop_mutex);
+            radio_stop_rx(device);
         }
-        hackrf_disconnect(device);
+        radio_close(device);
     }
 
     receiver_bredr_stop_thread_pool(session);
-    receiver_bredr_destroy_channel_ctx(session);
-    bredr_piconet_store_free(&session->bredr_store);
+    receiver_bredr_channel_processor_destroy(session);
 
     if (stats_out)
     {
@@ -124,10 +127,7 @@ int receiver_session_run_bredr(receiver_session_t *session,
         stats_out->total_packets = session->bredr_total_packets;
         stats_out->header_packets = session->bredr_header_packets;
         stats_out->id_packets = session->bredr_id_packets;
-        stats_out->dropped_blocks = session->bredr_dropped_blocks;
         stats_out->channel_count = session->bredr_config.channel_count;
-        for (unsigned int i = 0; i < session->bredr_config.channel_count; i++)
-            stats_out->channel_dropped_blocks[i] = session->bredr_ctx[i].dropped_blocks;
     }
 
     return result;

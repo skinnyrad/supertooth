@@ -5,8 +5,8 @@
  * Overview
  * --------
  * A `bredr_piconet_store_t` manages a dynamic, LAP-keyed collection of
- * `bredr_piconet_t` objects.  Callers feed it decoded BR/EDR packets via
- * `bredr_piconet_store_add_packet()`; the store routes each packet to the
+ * `bredr_piconet_t` objects. Callers feed it BR/EDR events via
+ * `bredr_piconet_store_add_packet()`; the store routes each event to the
  * matching piconet (creating one on first sight) and internally drives a
  * repository-owned BR/EDR recovery backend.
  *
@@ -72,6 +72,13 @@ typedef struct
     /** Allocated capacity of entries[]. */
     size_t capacity;
 
+    /** RSSI EMA window in packets; 0 disables averaging. */
+    unsigned int rssi_avg_window;
+    /** Precomputed EMA alpha = 2 / (window + 1). */
+    float rssi_avg_alpha;
+    /** Precomputed 1 - alpha. */
+    float rssi_avg_one_minus_alpha;
+
 } bredr_piconet_store_t;
 
 /* ---------------------------------------------------------------------------
@@ -89,6 +96,18 @@ typedef struct
 void bredr_piconet_store_init(bredr_piconet_store_t *store);
 
 /**
+ * @brief Configure per-store exponential RSSI averaging.
+ *
+ * Averaging uses an EMA with alpha = 2 / (window + 1).
+ * For window=0, averaging is disabled and values are replaced by each new sample.
+ *
+ * @param store  Must not be NULL.
+ * @param window EMA window in packets. 0 disables averaging.
+ */
+void bredr_piconet_store_set_rssi_averaging(bredr_piconet_store_t *store,
+                                            unsigned int window);
+
+/**
  * @brief Release all heap memory owned by the store and its piconets.
  *
  * The store itself is zeroed; it may be re-initialised with
@@ -99,26 +118,26 @@ void bredr_piconet_store_init(bredr_piconet_store_t *store);
 void bredr_piconet_store_free(bredr_piconet_store_t *store);
 
 /**
- * @brief Route a packet to its piconet, driving UAP/clock recovery.
+ * @brief Route an event to its piconet, driving UAP/clock recovery.
  *
- * Searches the store for a piconet matching pkt->lap.  If not found, a new
+ * Searches the store for a piconet matching event->frame.lap. If not found, a new
  * piconet is heap-allocated, initialised, and appended to the store.
  *
- * After adding the packet, if the packet has a clean decoded header
+ * After adding the event, if the frame has a clean decoded header
  * (has_header && ac_errors == 0) and the piconet does not yet have both UAP
- * and CLK1-6, the packet is fed to the active BR/EDR recovery backend. Once a
+ * and CLK1-6, the frame is fed to the active BR/EDR recovery backend. Once a
  * UAP is reported, the store scans all 64 CLK1-6 candidates using HEC
  * verification and calls bredr_piconet_set_uap() on the piconet.
  *
  * @param store    Initialised store.  Must not be NULL.
- * @param packet   Decoded BR/EDR packet to add. Must not be NULL.
- * @param clkn     Packet timestamp in CLKN half-slot ticks (312.5 us).
+ * @param event    BR/EDR event to add. Must not be NULL.
+ * @param sample_rate_hz  BR/EDR sample rate used to derive slot clocks.
  * @return         Pointer to the piconet that received the packet, or NULL on
  *                 allocation failure.
  */
 bredr_piconet_t *bredr_piconet_store_add_packet(bredr_piconet_store_t *store,
-                                                  const decoded_packet_t *packet,
-                                                  uint32_t clkn);
+                                                  const bredr_event_t *event,
+                                                  unsigned int sample_rate_hz);
 
 /**
  * @brief Return the number of piconets currently tracked by the store.

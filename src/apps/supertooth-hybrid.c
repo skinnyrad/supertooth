@@ -8,7 +8,7 @@
 #include "app_common.h"
 #include "ble_display.h"
 #include "bredr_display.h"
-#include "ble_phy.h"
+#include "ble_bitstream_decoder.h"
 #include "receiver_session.h"
 
 static unsigned long g_packet_count = 0;
@@ -22,10 +22,10 @@ static const app_output_mode_option_t s_output_modes[] = {
 static app_output_mode_t g_output_mode = APP_OUTPUT_MODE_FULL;
 
 static void print_ble_packet_full(unsigned long packet_no,
-                                  const decoded_packet_t *packet)
+                                  const ble_event_t *event)
 {
-    const ble_packet_t *pkt = &packet->u.ble;
-    const rx_metadata_t *meta = &packet->meta;
+    const rx_metadata_t *meta = &event->meta;
+    ble_packet_t packet;
     printf("\n------------------ Packet #%lu --------------------\n", packet_no);
     printf("[RX Info]\n");
     printf("Sample Index : %" PRIu64 " (%u Msps master clock)\n",
@@ -34,22 +34,39 @@ static void print_ble_packet_full(unsigned long packet_no,
     printf("Frequency    : %u MHz (Channel %u)\n",
            (unsigned int)(meta->center_frequency_hz / 1000000u), meta->channel_index);
     printf("RSSI         : %.2f dBr\n\n", meta->rssi_dbr);
-    ble_print_packet(pkt);
+    if (ble_decode_frame(&event->frame, meta->channel_index, &packet) == 0)
+        ble_print_packet(&packet);
+    else
+        printf("[BLE Decode Error]\n");
     printf("--------------------------------------------------\n");
 }
 
 static void print_ble_packet_summary(unsigned long packet_no,
-                                     const decoded_packet_t *packet)
+                                     const ble_event_t *event)
 {
-    ble_print_packet_summary_line(packet_no, &packet->u.ble, &packet->meta);
+    ble_packet_t packet;
+    if (ble_decode_frame(&event->frame, event->meta.channel_index, &packet) == 0)
+    {
+        ble_print_packet_summary_line(packet_no, &packet, &event->meta);
+        return;
+    }
+
+    printf("pkt=%-6lu type=BLE pdu=%-14s ch=%02u addr=%s len=%-3u crc=%s rssi=%.1f\n",
+           packet_no,
+           "DECODE_FAIL",
+           event->meta.channel_index,
+           "--",
+           0u,
+           "FAIL",
+           event->meta.rssi_dbr);
 }
 
 static void print_bredr_packet_full(unsigned long packet_no,
-                                    const decoded_packet_t *packet,
+                                    const bredr_event_t *event,
                                     const receiver_bredr_piconet_snapshot_t *pnet)
 {
-    const bredr_packet_t *pkt = &packet->u.bredr;
-    const rx_metadata_t *meta = &packet->meta;
+    const bredr_frame_t *frame = &event->frame;
+    const rx_metadata_t *meta = &event->meta;
     printf("\n------------------ Packet #%lu --------------------\n", packet_no);
     printf("[RX Info]\n");
     printf("Sample Index : %" PRIu64 " (%u Msps master clock)\n",
@@ -58,15 +75,15 @@ static void print_bredr_packet_full(unsigned long packet_no,
     printf("Frequency    : %u MHz (Channel %u)\n",
            (unsigned int)(meta->center_frequency_hz / 1000000u), meta->channel_index);
     printf("RSSI         : %.2f dBr\n\n", meta->rssi_dbr);
-    bredr_print_packet_details(pkt, pnet);
+    bredr_print_packet_details(frame, pnet, meta, RECEIVER_HYBRID_SAMPLE_RATE);
     printf("--------------------------------------------------\n");
 }
 
 static void print_bredr_packet_summary(unsigned long packet_no,
-                                       const decoded_packet_t *packet,
+                                       const bredr_event_t *event,
                                        const receiver_bredr_piconet_snapshot_t *pnet)
 {
-    bredr_print_packet_summary_line(packet_no, &packet->u.bredr, pnet, &packet->meta);
+    bredr_print_packet_summary_line(packet_no, &event->frame, pnet, &event->meta);
 }
 
 static void print_usage(const char *argv0)
@@ -76,7 +93,7 @@ static void print_usage(const char *argv0)
     fprintf(stderr, "  %-30s Print block-drop diagnostics\n", "-d, --debug");
 }
 
-static void handle_hybrid_bredr_packet(const decoded_packet_t *packet,
+static void handle_hybrid_bredr_packet(const bredr_event_t *event,
                                        const receiver_bredr_piconet_snapshot_t *pnet,
                                        void *user)
 {
@@ -84,23 +101,23 @@ static void handle_hybrid_bredr_packet(const decoded_packet_t *packet,
     app_output_lock();
     unsigned long packet_no = ++g_packet_count;
     if (g_output_mode == APP_OUTPUT_MODE_SUMMARY)
-        print_bredr_packet_summary(packet_no, packet, pnet);
+        print_bredr_packet_summary(packet_no, event, pnet);
     else
-        print_bredr_packet_full(packet_no, packet, pnet);
+        print_bredr_packet_full(packet_no, event, pnet);
     fflush(stdout);
     app_output_unlock();
 }
 
-static void handle_hybrid_ble_packet(const decoded_packet_t *packet,
+static void handle_hybrid_ble_packet(const ble_event_t *event,
                                      void *user)
 {
     (void)user;
     app_output_lock();
     unsigned long packet_no = ++g_packet_count;
     if (g_output_mode == APP_OUTPUT_MODE_SUMMARY)
-        print_ble_packet_summary(packet_no, packet);
+        print_ble_packet_summary(packet_no, event);
     else
-        print_ble_packet_full(packet_no, packet);
+        print_ble_packet_full(packet_no, event);
     fflush(stdout);
     app_output_unlock();
 }
@@ -170,26 +187,18 @@ int main(int argc, char *argv[])
     printf("Receiving... Press Ctrl+C to stop.\n");
     int result = receiver_session_run_hybrid(g_session, &config, &callbacks, &stats);
 
-    unsigned long ch_drops_total = 0ul;
-    for (unsigned int i = 0; i < stats.bredr_channel_count; i++)
-        ch_drops_total += stats.bredr_channel_dropped_blocks[i];
-
     printf("\n\n=== Session Summary ===\n");
     printf("  Output mode    : %s\n",
            app_output_mode_name(g_output_mode, s_output_modes,
                                 sizeof(s_output_modes) / sizeof(s_output_modes[0])));
     printf("  Debug mode     : %s\n", g_debug ? "enabled" : "disabled");
     printf("  Total packets  : %lu\n", stats.total_packets);
-    printf("  Dropped blocks : %lu\n", stats.dropped_blocks);
-
-    printf("\n=== Debug Summary ===\n");
-    printf("  BR/EDR queue drops (total): %lu\n", ch_drops_total);
-    printf("  BR/EDR queue drops (per-channel):\n");
-    for (unsigned int i = 0; i < stats.bredr_channel_count; i++)
-        printf("    ch=%02u dropped=%lu\n", i, stats.bredr_channel_dropped_blocks[i]);
-    printf("  BLE queue drops (total): %lu\n", stats.ble_dropped_blocks);
-    printf("  BLE queue drops (per-channel):\n");
-    printf("    ch=%02u dropped=%lu\n", BLE_CH37_INDEX, stats.ble_dropped_blocks);
+    if (g_debug)
+    {
+        printf("\n=== Debug Summary ===\n");
+        printf("  Dropped blocks : %lu\n",
+               receiver_session_dispatcher_dropped_blocks(g_session));
+    }
 
     receiver_session_destroy(g_session);
     g_session = NULL;

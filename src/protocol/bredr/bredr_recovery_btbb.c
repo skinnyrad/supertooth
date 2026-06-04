@@ -13,22 +13,30 @@ struct bredr_recovery_btbb_state
     btbb_piconet *piconet;
 };
 
-static btbb_packet *btbb_packet_from_bredr(const bredr_packet_t *pkt,
+#define BREDR_BTBB_BASE_PACKET_BITS ((BREDR_AC_BITS - 4u) + 54u)
+#define BREDR_BTBB_MAX_PACKET_BITS (BREDR_BTBB_BASE_PACKET_BITS + BR_MAX_AIR_PAYLOAD_BITS)
+
+static uint8_t bredr_frame_air_payload_bit(const bredr_frame_t *frame, unsigned int bit_pos)
+{
+    unsigned int byte_idx = bit_pos / 8u;
+    unsigned int bit_idx = bit_pos % 8u;
+    return (uint8_t)((frame->air_payload[byte_idx] >> bit_idx) & 1u);
+}
+
+static btbb_packet *btbb_packet_from_bredr(const bredr_frame_t *frame,
                                            int channel,
                                            uint32_t clkn)
 {
-    if (!pkt || !pkt->has_header)
+    if (!frame || !frame->has_header)
         return NULL;
 
-    char symbols[BREDR_SYMBOLS_MAX] = {0};
-    unsigned int payload_bits = pkt->payload_bytes * 8u;
-    const unsigned int max_payload = BREDR_SYMBOLS_MAX > 122u
-                                         ? BREDR_SYMBOLS_MAX - 122u
-                                         : 0u;
-    if (payload_bits > max_payload)
-        payload_bits = max_payload;
+    char symbols[BREDR_BTBB_MAX_PACKET_BITS] = {0};
+    unsigned int air_payload_bits = frame->air_payload_bits;
+    const unsigned int max_payload = BR_MAX_AIR_PAYLOAD_BITS;
+    if (air_payload_bits > max_payload)
+        air_payload_bits = max_payload;
 
-    uint64_t sw = bredr_gen_syncword(pkt->lap & 0xFFFFFFu);
+    uint64_t sw = bredr_gen_syncword(frame->lap & 0xFFFFFFu);
     for (unsigned int i = 0; i < 64u; i++)
         symbols[i] = (char)((sw >> i) & 1u);
 
@@ -38,16 +46,20 @@ static btbb_packet *btbb_packet_from_bredr(const bredr_packet_t *pkt,
         symbols[64u + i] = (char)((trailer >> i) & 1u);
 
     for (unsigned int i = 0; i < 54u; i++)
-        symbols[68u + i] = (char)((pkt->header_raw >> i) & 1u);
+        symbols[68u + i] = (char)((frame->header_raw >> i) & 1u);
 
-    for (unsigned int i = 0; i < payload_bits; i++)
-        symbols[122u + i] = (char)((pkt->payload[i / 8u] >> (i % 8u)) & 1u);
+    for (unsigned int i = 0; i < air_payload_bits; i++)
+        symbols[122u + i] = (char)bredr_frame_air_payload_bit(frame, i);
 
     btbb_packet *bp = btbb_packet_new();
     if (!bp)
         return NULL;
 
-    btbb_packet_set_data(bp, symbols, (int)(122u + payload_bits), (uint8_t)channel, clkn);
+    btbb_packet_set_data(bp,
+                         symbols,
+                         (int)(BREDR_BTBB_BASE_PACKET_BITS + air_payload_bits),
+                         (uint8_t)channel,
+                         clkn);
     btbb_packet_set_flag(bp, BTBB_WHITENED, 1);
     return bp;
 }
@@ -91,16 +103,16 @@ void bredr_recovery_btbb_state_reset(bredr_recovery_btbb_state_t *state, uint32_
 }
 
 int bredr_recovery_btbb_process_packet(bredr_recovery_btbb_state_t *state,
-                                       const bredr_packet_t *pkt,
+                                       const bredr_frame_t *frame,
                                        int channel,
                                        uint32_t clkn,
                                        uint8_t *uap_out,
                                        uint8_t *clk6_hint_out)
 {
-    if (!state || !state->piconet || !pkt || !pkt->has_header)
+    if (!state || !state->piconet || !frame || !frame->has_header)
         return 0;
 
-    btbb_packet *bp = btbb_packet_from_bredr(pkt, channel, clkn);
+    btbb_packet *bp = btbb_packet_from_bredr(frame, channel, clkn);
     if (!bp)
         return 0;
 
@@ -136,7 +148,7 @@ static void btbb_state_reset_adapter(bredr_recovery_backend_state_t *state, uint
 }
 
 static int btbb_process_packet_adapter(bredr_recovery_backend_state_t *state,
-                                       const bredr_packet_t *pkt,
+                                       const bredr_frame_t *frame,
                                        int channel,
                                        uint32_t clkn,
                                        bredr_recovery_result_t *out)
@@ -148,7 +160,7 @@ static int btbb_process_packet_adapter(bredr_recovery_backend_state_t *state,
         return 0;
 
     if (!bredr_recovery_btbb_process_packet((bredr_recovery_btbb_state_t *)state,
-                                            pkt, channel, clkn, &uap, &clk6_hint))
+                                            frame, channel, clkn, &uap, &clk6_hint))
         return 0;
 
     out->uap = uap;
