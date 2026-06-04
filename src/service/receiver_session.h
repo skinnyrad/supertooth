@@ -199,11 +199,11 @@ struct receiver_session
     unsigned long hybrid_total_packets;
 };
 
-rx_metadata_t receiver_make_metadata(uint64_t start_sample,
+rx_metadata_t receiver_make_metadata(uint64_t radio_start_sample_index,
+                                     uint32_t radio_sample_rate_hz,
                                      uint32_t center_frequency_hz,
                                      uint16_t channel_index,
-                                     float rssi_dbr,
-                                     uint8_t confidence);
+                                     float rssi_dbr);
 void receiver_fill_bredr_piconet_snapshot(const bredr_piconet_t *pnet,
                                           receiver_bredr_piconet_snapshot_t *out);
 void receiver_bredr_session_init(receiver_session_t *session,

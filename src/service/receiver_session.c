@@ -4,19 +4,19 @@
 #include <stdlib.h>
 #include <string.h>
 
-rx_metadata_t receiver_make_metadata(uint64_t start_sample,
+rx_metadata_t receiver_make_metadata(uint64_t radio_start_sample_index,
+                                     uint32_t radio_sample_rate_hz,
                                      uint32_t center_frequency_hz,
                                      uint16_t channel_index,
-                                     float rssi_dbr,
-                                     uint8_t confidence)
+                                     float rssi_dbr)
 {
     rx_metadata_t meta = {
         .source_id = RECEIVER_SOURCE_ID_DEFAULT,
-        .start_sample = start_sample,
+        .radio_start_sample_index = radio_start_sample_index,
+        .radio_sample_rate_hz = radio_sample_rate_hz,
         .center_frequency_hz = center_frequency_hz,
         .channel_index = channel_index,
         .rssi_dbr = rssi_dbr,
-        .confidence = confidence,
     };
     return meta;
 }

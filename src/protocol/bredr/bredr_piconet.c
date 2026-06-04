@@ -41,6 +41,86 @@ static float update_rssi_value(float current, int seen, float sample,
     return alpha * sample + one_minus_alpha * current;
 }
 
+static uint32_t bredr_sample_to_rx_clk_1600(const bredr_event_t *event)
+{
+    uint64_t num;
+    unsigned int radio_sample_rate_hz;
+
+    if (!event)
+        return 0u;
+
+    radio_sample_rate_hz = event->meta.radio_sample_rate_hz;
+    if (radio_sample_rate_hz == 0u)
+        return 0u;
+
+    num = event->meta.radio_start_sample_index * 1600u +
+          (uint64_t)(radio_sample_rate_hz / 2u);
+    return (uint32_t)(num / (uint64_t)radio_sample_rate_hz);
+}
+
+static unsigned int bredr_queue_oldest_index(const bredr_piconet_t *pnet,
+                                             unsigned int fill)
+{
+    return (pnet->queue_head + BREDR_PICONET_QUEUE_SIZE - fill) %
+           BREDR_PICONET_QUEUE_SIZE;
+}
+
+static unsigned int bredr_queue_index_at(const bredr_piconet_t *pnet,
+                                         unsigned int fill,
+                                         unsigned int logical_pos)
+{
+    return (bredr_queue_oldest_index(pnet, fill) + logical_pos) %
+           BREDR_PICONET_QUEUE_SIZE;
+}
+
+static int bredr_queue_insert_event(bredr_piconet_t *pnet,
+                                    const bredr_event_t *event)
+{
+    unsigned int fill;
+    unsigned int insert_pos = 0u;
+    int newest;
+    bredr_event_t carry;
+
+    if (!pnet || !event)
+        return 0;
+
+    fill = pnet->queue_fill;
+    while (insert_pos < fill)
+    {
+        unsigned int idx = bredr_queue_index_at(pnet, fill, insert_pos);
+        if (pnet->queue[idx].meta.radio_start_sample_index >
+            event->meta.radio_start_sample_index)
+            break;
+        insert_pos++;
+    }
+
+    newest = (insert_pos == fill);
+
+    if (fill == BREDR_PICONET_QUEUE_SIZE)
+    {
+        if (insert_pos == 0u)
+            return 0;
+
+        fill--;
+        pnet->queue_fill = fill;
+        insert_pos--;
+    }
+
+    carry = *event;
+    for (unsigned int pos = insert_pos; pos < fill; pos++)
+    {
+        unsigned int idx = bredr_queue_index_at(pnet, fill, pos);
+        bredr_event_t displaced = pnet->queue[idx];
+        pnet->queue[idx] = carry;
+        carry = displaced;
+    }
+
+    pnet->queue[pnet->queue_head] = carry;
+    pnet->queue_head = (pnet->queue_head + 1u) % BREDR_PICONET_QUEUE_SIZE;
+    pnet->queue_fill = fill + 1u;
+    return newest;
+}
+
 /* ---------------------------------------------------------------------------
  * Clock tracking
  * ---------------------------------------------------------------------------*/
@@ -131,34 +211,34 @@ void bredr_piconet_set_uap_only(bredr_piconet_t *pnet, uint8_t uap)
     pnet->tracking_state = -1;
 }
 
-void bredr_piconet_add_packet(bredr_piconet_t *pnet,
-                              const bredr_event_t *event,
-                              uint32_t rx_clk_1600,
-                              unsigned int rssi_window,
-                              float rssi_alpha,
-                              float rssi_one_minus_alpha)
+int bredr_piconet_add_packet(bredr_piconet_t *pnet,
+                             const bredr_event_t *event,
+                             unsigned int rssi_window,
+                             float rssi_alpha,
+                             float rssi_one_minus_alpha)
 {
+    int packet_is_newest;
+    int has_active_track;
+    uint32_t rx_clk_1600;
+
     if (!pnet || !event)
-        return;
+        return 0;
     const bredr_frame_t *frame = &event->frame;
     const rx_metadata_t *meta = &event->meta;
-
-    /* Copy into ring buffer. */
-    pnet->queue[pnet->queue_head] = *event;
-    pnet->queue_head = (pnet->queue_head + 1u) % BREDR_PICONET_QUEUE_SIZE;
-    if (pnet->queue_fill < BREDR_PICONET_QUEUE_SIZE)
-        pnet->queue_fill++;
+    rx_clk_1600 = bredr_sample_to_rx_clk_1600(event);
 
     pnet->total_packets++;
+    packet_is_newest = bredr_queue_insert_event(pnet, event);
 
     if (pnet->total_packets == 1u)
         pnet->first_seen = rx_clk_1600;
-    pnet->last_seen = rx_clk_1600;
+    if (packet_is_newest)
+        pnet->last_seen = rx_clk_1600;
 
-    int has_active_track = (pnet->uap_found && pnet->clk_known && pnet->tracking_state > 0);
+    has_active_track = (pnet->uap_found && pnet->clk_known && pnet->tracking_state > 0);
 
     /* Before track lock, keep only latest aggregate RSSI. */
-    if (!has_active_track && !isnan(meta->rssi_dbr))
+    if (packet_is_newest && !has_active_track && !isnan(meta->rssi_dbr))
     {
         pnet->combined_rssi =
             update_rssi_value(pnet->combined_rssi, pnet->combined_rssi_seen, meta->rssi_dbr,
@@ -167,15 +247,15 @@ void bredr_piconet_add_packet(bredr_piconet_t *pnet,
     }
 
     /* Directional RSSI accumulation requires active track + header packet. */
-    if (!has_active_track || !frame->has_header)
-        return;
+    if (!packet_is_newest || !has_active_track || !frame->has_header)
+        return packet_is_newest;
 
     /* Update per-role RSSI only when current frame passes HEC under tracking. */
     int hec_ok = 0;
     if (frame->ac_errors <= 1u)
         hec_ok = update_clock(pnet, frame, rx_clk_1600);
     if (!hec_ok || isnan(meta->rssi_dbr))
-        return;
+        return packet_is_newest;
 
     uint8_t packet_clk6 = pnet->central_clk_1_6;
 
@@ -200,4 +280,6 @@ void bredr_piconet_add_packet(bredr_piconet_t *pnet,
                               rssi_window, rssi_alpha, rssi_one_minus_alpha);
         pnet->slave_rssi_seen[lt] = 1;
     }
+
+    return packet_is_newest;
 }

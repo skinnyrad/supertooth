@@ -187,12 +187,11 @@ extern "C"
      * @param pnet  Must not be NULL and must have been initialised.
     * @param event BR/EDR event to add. Must not be NULL.
      */
-    void bredr_piconet_add_packet(bredr_piconet_t *pnet,
-                            const bredr_event_t *event,
-                            uint32_t rx_clk_1600,
-                            unsigned int rssi_window,
-                            float rssi_alpha,
-                            float rssi_one_minus_alpha);
+    int bredr_piconet_add_packet(bredr_piconet_t *pnet,
+                           const bredr_event_t *event,
+                           unsigned int rssi_window,
+                           float rssi_alpha,
+                           float rssi_one_minus_alpha);
 
     /**
      * @brief Record the UAP and initial CLK1-6, as solved by libbtbb.

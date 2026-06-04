@@ -163,10 +163,12 @@ void receiver_ble_channel_processor_process(ble_channel_processor_t *ble,
             (buf_start + sample_index) * (unsigned long long)ble->sample_scale;
         rx_metadata_t meta =
             receiver_make_metadata(abs_sample_index,
+                                   ble->pipeline == RECEIVER_BLE_PIPELINE_HYBRID
+                                       ? RECEIVER_HYBRID_SAMPLE_RATE
+                                       : RECEIVER_BLE_SAMPLE_RATE,
                                    ble->center_frequency_hz,
                                    ble->channel_index,
-                                   rssi_dbr,
-                                   255u);
+                                   rssi_dbr);
         ble_event_t event = {
             .meta = meta,
             .frame = frame,

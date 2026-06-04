@@ -27,8 +27,7 @@ typedef struct
 
 void bredr_print_packet_details(const bredr_frame_t *frame,
                                 const bredr_piconet_snapshot_t *pnet,
-                                const rx_metadata_t *meta,
-                                unsigned int sample_rate_hz);
+                                const rx_metadata_t *meta);
 void bredr_print_packet_summary_line(unsigned long packet_no,
                                      const bredr_frame_t *frame,
                                      const bredr_piconet_snapshot_t *pnet,

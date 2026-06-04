@@ -67,8 +67,9 @@ static void print_ble_packet_full(unsigned long packet_no,
     ble_packet_t packet;
     printf("\n------------------ Packet #%lu --------------------\n", packet_no);
     printf("[RX Info]\n");
-    printf("Sample Index : %" PRIu64 " (%u Msps master clock)\n",
-           meta->start_sample, (unsigned int)(RECEIVER_BLE_SAMPLE_RATE / 1000000u));
+        printf("Radio Sample : %" PRIu64 " (%u Msps input)\n",
+            meta->radio_start_sample_index,
+            (unsigned int)(meta->radio_sample_rate_hz / 1000000u));
     printf("Type         : BLE\n");
     printf("Frequency    : %u MHz (Channel %u)\n",
            (unsigned int)(meta->center_frequency_hz / 1000000u), meta->channel_index);

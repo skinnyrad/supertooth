@@ -67,21 +67,20 @@ static void bredr_print_payload_preview(const bredr_frame_t *frame)
     printf("\n");
 }
 
-static uint32_t bredr_sample_to_rx_clk_1600(uint64_t start_sample,
-                                            unsigned int sample_rate_hz)
+static uint32_t bredr_sample_to_rx_clk_1600(uint64_t radio_start_sample_index,
+                                            unsigned int radio_sample_rate_hz)
 {
     uint64_t num;
 
-    if (sample_rate_hz == 0u)
+    if (radio_sample_rate_hz == 0u)
         return 0u;
 
-    num = start_sample * 1600u + (uint64_t)(sample_rate_hz / 2u);
-    return (uint32_t)(num / (uint64_t)sample_rate_hz);
+    num = radio_start_sample_index * 1600u + (uint64_t)(radio_sample_rate_hz / 2u);
+    return (uint32_t)(num / (uint64_t)radio_sample_rate_hz);
 }
 
 static int bredr_build_decode_inputs(const bredr_piconet_snapshot_t *pnet,
                                      const rx_metadata_t *meta,
-                                     unsigned int sample_rate_hz,
                                      uint8_t *uap_out,
                                      uint8_t *clk1_6_out)
 {
@@ -99,14 +98,15 @@ static int bredr_build_decode_inputs(const bredr_piconet_snapshot_t *pnet,
 
     if (pnet->uap_found)
         *uap_out = pnet->uap;
-    if (pnet->clk_known && meta && sample_rate_hz != 0u)
+    if (pnet->clk_known && meta && meta->radio_sample_rate_hz != 0u)
     {
-        rx_clk_1600 = bredr_sample_to_rx_clk_1600(meta->start_sample, sample_rate_hz);
+        rx_clk_1600 = bredr_sample_to_rx_clk_1600(meta->radio_start_sample_index,
+                                                  meta->radio_sample_rate_hz);
         delta = rx_clk_1600 - pnet->last_successful_rx_clk_1600;
         *clk1_6_out = (uint8_t)((pnet->central_clk_1_6 + delta) & 0x3Fu);
     }
 
-    return pnet->uap_found && pnet->clk_known && meta && sample_rate_hz != 0u;
+    return pnet->uap_found && pnet->clk_known && meta && meta->radio_sample_rate_hz != 0u;
 }
 
 static void bredr_print_hex_line(const char *label,
@@ -187,8 +187,7 @@ static void bredr_print_decoded_payload(const bredr_packet_t *packet)
 
 void bredr_print_packet_details(const bredr_frame_t *frame,
                                 const bredr_piconet_snapshot_t *pnet,
-                                const rx_metadata_t *meta,
-                                unsigned int sample_rate_hz)
+                                const rx_metadata_t *meta)
 {
     bredr_packet_t packet;
     uint8_t decode_uap;
@@ -207,7 +206,7 @@ void bredr_print_packet_details(const bredr_frame_t *frame,
         printf("HEADER       : (none — shortened access code)\n");
 
     memset(&packet, 0, sizeof(packet));
-    have_decode_inputs = bredr_build_decode_inputs(pnet, meta, sample_rate_hz, &decode_uap, &decode_clk1_6);
+    have_decode_inputs = bredr_build_decode_inputs(pnet, meta, &decode_uap, &decode_clk1_6);
     if (have_decode_inputs)
     {
         decode_ok = bredr_decode_frame(frame, decode_uap, decode_clk1_6, &packet);
@@ -335,7 +334,7 @@ void bredr_print_rssi_snapshot(unsigned long packet_no,
 {
     printf("\n================ RSSI Snapshot (Packet #%lu) ================\n", packet_no);
     printf("Sample Index : %" PRIu64 " (%u Msps master clock)\n",
-           meta->start_sample, master_clock_mhz);
+           meta->radio_start_sample_index, master_clock_mhz);
     printf("Piconets     : %zu\n", count);
     printf("--------------------------------------------------------------\n");
 

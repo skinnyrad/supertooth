@@ -75,13 +75,14 @@ static void print_packet_full(unsigned long packet_no,
     const rx_metadata_t *meta = &event->meta;
     printf("\n------------------ Packet #%lu --------------------\n", packet_no);
     printf("[RX Info]\n");
-    printf("Sample Index : %" PRIu64 " (%u Msps master clock)\n",
-           meta->start_sample, current_master_clock_mhz());
+        printf("Radio Sample : %" PRIu64 " (%u Msps input)\n",
+            meta->radio_start_sample_index,
+            (unsigned int)(meta->radio_sample_rate_hz / 1000000u));
     printf("Type         : BR/EDR\n");
     printf("Frequency    : %u MHz (Channel %u)\n",
            (unsigned int)(meta->center_frequency_hz / 1000000u), meta->channel_index);
     printf("RSSI         : %.2f dBr\n", meta->rssi_dbr);
-    bredr_print_packet_details(frame, pnet, meta, current_master_clock_mhz() * 1000000u);
+    bredr_print_packet_details(frame, pnet, meta);
 
     printf("--------------------------------------------------\n");
 }

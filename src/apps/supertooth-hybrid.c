@@ -28,8 +28,9 @@ static void print_ble_packet_full(unsigned long packet_no,
     ble_packet_t packet;
     printf("\n------------------ Packet #%lu --------------------\n", packet_no);
     printf("[RX Info]\n");
-    printf("Sample Index : %" PRIu64 " (%u Msps master clock)\n",
-           meta->start_sample, RECEIVER_HYBRID_SAMPLE_RATE / 1000000u);
+        printf("Radio Sample : %" PRIu64 " (%u Msps input)\n",
+            meta->radio_start_sample_index,
+            (unsigned int)(meta->radio_sample_rate_hz / 1000000u));
     printf("Type         : BLE\n");
     printf("Frequency    : %u MHz (Channel %u)\n",
            (unsigned int)(meta->center_frequency_hz / 1000000u), meta->channel_index);
@@ -69,13 +70,14 @@ static void print_bredr_packet_full(unsigned long packet_no,
     const rx_metadata_t *meta = &event->meta;
     printf("\n------------------ Packet #%lu --------------------\n", packet_no);
     printf("[RX Info]\n");
-    printf("Sample Index : %" PRIu64 " (%u Msps master clock)\n",
-           meta->start_sample, RECEIVER_HYBRID_SAMPLE_RATE / 1000000u);
+        printf("Radio Sample : %" PRIu64 " (%u Msps input)\n",
+            meta->radio_start_sample_index,
+            (unsigned int)(meta->radio_sample_rate_hz / 1000000u));
     printf("Type         : BR/EDR\n");
     printf("Frequency    : %u MHz (Channel %u)\n",
            (unsigned int)(meta->center_frequency_hz / 1000000u), meta->channel_index);
     printf("RSSI         : %.2f dBr\n\n", meta->rssi_dbr);
-    bredr_print_packet_details(frame, pnet, meta, RECEIVER_HYBRID_SAMPLE_RATE);
+    bredr_print_packet_details(frame, pnet, meta);
     printf("--------------------------------------------------\n");
 }
 

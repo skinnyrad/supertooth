@@ -204,27 +204,30 @@ void receiver_bredr_channel_processor_process(bredr_channel_processor_t *ctx,
         }
         float rssi_dbr = ctx->pending_rssi_valid ? ctx->pending_rssi_dbr : RECEIVER_RSSI_INVALID;
         rx_metadata_t meta = receiver_make_metadata(abs_raw,
+                                                    session->bredr_sample_rate,
                                                     (uint32_t)(RECEIVER_BREDR_CHANNEL_0_FREQ +
                                                                (double)ctx->bredr_channel *
                                                                    RECEIVER_BREDR_CHANNEL_BW),
                                                     (uint16_t)ctx->bredr_channel,
-                                                    rssi_dbr,
-                                                    (uint8_t)(255u - frame.ac_errors));
+                                                    rssi_dbr);
         bredr_event_t event = {
             .meta = meta,
             .frame = frame,
         };
 
         pthread_mutex_lock(&session->decoded_packet_mutex);
+        int packet_is_newest = 0;
         bredr_piconet_t *pnet =
             bredr_piconet_store_add_packet(&session->bredr_store, &event,
-                                           session->bredr_sample_rate);
+                                           &packet_is_newest);
         receiver_bredr_callbacks_t callbacks = session->bredr_callbacks;
         receiver_bredr_piconet_snapshot_t snapshot;
         receiver_bredr_piconet_snapshot_t *snapshot_ptr = NULL;
         if (pnet)
         {
             receiver_fill_bredr_piconet_snapshot(pnet, &snapshot);
+            if (!packet_is_newest)
+                snapshot.clk_known = 0;
             snapshot_ptr = &snapshot;
         }
         session->bredr_total_packets++;

@@ -131,13 +131,12 @@ void bredr_piconet_store_free(bredr_piconet_store_t *store);
  *
  * @param store    Initialised store.  Must not be NULL.
  * @param event    BR/EDR event to add. Must not be NULL.
- * @param sample_rate_hz  BR/EDR sample rate used to derive slot clocks.
  * @return         Pointer to the piconet that received the packet, or NULL on
  *                 allocation failure.
  */
 bredr_piconet_t *bredr_piconet_store_add_packet(bredr_piconet_store_t *store,
-                                                  const bredr_event_t *event,
-                                                  unsigned int sample_rate_hz);
+                                                const bredr_event_t *event,
+                                                int *packet_is_newest);
 
 /**
  * @brief Return the number of piconets currently tracked by the store.
