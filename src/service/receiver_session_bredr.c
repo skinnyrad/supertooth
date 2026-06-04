@@ -119,7 +119,6 @@ int receiver_session_run_bredr(receiver_session_t *session,
 
     receiver_bredr_stop_thread_pool(session);
     receiver_bredr_channel_processor_destroy(session);
-    bredr_piconet_store_free(&session->bredr_store);
 
     if (stats_out)
     {

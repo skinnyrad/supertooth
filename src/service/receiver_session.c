@@ -48,6 +48,7 @@ void receiver_bredr_session_init(receiver_session_t *session,
                                  const receiver_bredr_config_t *config,
                                  const receiver_bredr_callbacks_t *callbacks)
 {
+    bredr_piconet_store_free(&session->bredr_store);
     memset(&session->bredr_store, 0, sizeof(session->bredr_store));
     memset(session->bredr_ctx, 0, RECEIVER_BREDR_MAX_CHANNELS * sizeof(*session->bredr_ctx));
     session->stop_requested = 0;
@@ -103,6 +104,7 @@ void receiver_session_destroy(receiver_session_t *session)
 {
     if (session)
     {
+        bredr_piconet_store_free(&session->bredr_store);
         pthread_cond_destroy(&session->stop_cv);
         pthread_mutex_destroy(&session->stop_mutex);
         pthread_mutex_destroy(&session->decoded_packet_mutex);

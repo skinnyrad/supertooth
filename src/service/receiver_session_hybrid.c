@@ -207,6 +207,5 @@ int receiver_session_run_hybrid(receiver_session_t *session,
 
     receiver_ble_channel_processor_destroy(session);
     receiver_bredr_channel_processor_destroy(session);
-    bredr_piconet_store_free(&session->bredr_store);
     return result;
 }
