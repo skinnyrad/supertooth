@@ -139,40 +139,20 @@ static int update_clock(bredr_piconet_t *pnet,
 {
     uint32_t rx_clk_1600_delta = rx_clk_1600 - pnet->last_successful_rx_clk_1600;
     int expected_clk6 = (int)((pnet->central_clk_1_6 + rx_clk_1600_delta) & 0x3f);
-    int matched_candidate = -1;
-    unsigned int match_count = 0u;
 
-    if (bredr_hec_ok_for_clk6(frame, pnet->uap, (uint8_t)expected_clk6))
-    {
-        pnet->central_clk_1_6 = (uint8_t)expected_clk6;
-        pnet->last_successful_rx_clk_1600 = rx_clk_1600;
-        if (pnet->tracking_state < 5)
-            pnet->tracking_state++;
-        pnet->clk_known = 1;
-        return 1;
-    }
-
-    static const int offsets[] = {1, -1, 2, -2};
-    for (int k = 0; k < 4; k++)
+    static const int offsets[] = {0, 1, -1, 2, -2};
+    for (int k = 0; k < 5; k++)
     {
         int candidate = ((expected_clk6 + offsets[k]) + 64) % 64;
-        if (!bredr_hec_ok_for_clk6(frame, pnet->uap, (uint8_t)candidate))
-            continue;
-
-        matched_candidate = candidate;
-        match_count++;
-        if (match_count > 1u)
-            break;
-    }
-
-    if (match_count == 1u)
-    {
-        pnet->central_clk_1_6 = (uint8_t)matched_candidate;
-        pnet->last_successful_rx_clk_1600 = rx_clk_1600;
-        if (pnet->tracking_state < 5)
-            pnet->tracking_state++;
-        pnet->clk_known = 1;
-        return 1;
+        if (bredr_hec_ok_for_clk6(frame, pnet->uap, (uint8_t)candidate))
+        {
+            pnet->central_clk_1_6 = (uint8_t)candidate;
+            pnet->last_successful_rx_clk_1600 = rx_clk_1600;
+            if (pnet->tracking_state < 5)
+                pnet->tracking_state++;
+            pnet->clk_known = 1;
+            return 1;
+        }
     }
 
     if (pnet->tracking_state > 0)
