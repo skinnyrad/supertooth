@@ -100,17 +100,38 @@ static int bredr_payload_has_supported_coding(uint8_t type_code)
     case 0x01u:
     case 0x03u:
     case 0x04u:
+    case 0x05u:
+    case 0x06u:
     case 0x07u:
     case 0x08u:
     case 0x09u:
     case 0x0Au:
     case 0x0Bu:
+    case 0x0Cu:
     case 0x0Du:
     case 0x0Eu:
     case 0x0Fu:
         return 1;
     default:
         return 0;
+    }
+}
+
+static unsigned int bredr_sync_max_air_payload_bits(uint8_t type_code)
+{
+    switch (type_code & 0x0Fu)
+    {
+    case 0x05u:
+    case 0x06u:
+        return 240u;
+    case 0x07u:
+        return 256u;
+    case 0x0Cu:
+        return 1470u;
+    case 0x0Du:
+        return 1456u;
+    default:
+        return 0u;
     }
 }
 
@@ -312,6 +333,82 @@ static unsigned int bredr_decode_acl_payload_from_air(const bredr_frame_t *frame
     }
 }
 
+static unsigned int bredr_decode_sync_payload_from_air(const bredr_frame_t *frame,
+                                                       uint8_t type_code,
+                                                       uint8_t clk6,
+                                                       uint8_t *dst,
+                                                       unsigned int dst_capacity)
+{
+    uint8_t decoded_air[BR_MAX_AIR_PAYLOAD_BYTES];
+    unsigned int captured_air_bits;
+    unsigned int input_air_bits;
+    unsigned int decoded_air_bits = 0u;
+
+    if (!frame || !dst || dst_capacity == 0u)
+        return 0u;
+
+    captured_air_bits = frame->air_payload_bits;
+    input_air_bits = bredr_sync_max_air_payload_bits(type_code);
+    if (input_air_bits == 0u)
+        return 0u;
+    if (captured_air_bits < input_air_bits)
+        input_air_bits = captured_air_bits;
+
+    switch (type_code & 0x0Fu)
+    {
+    case 0x05u:
+        input_air_bits -= input_air_bits % 3u;
+        if (input_air_bits == 0u)
+            return 0u;
+
+        memset(decoded_air, 0, sizeof(decoded_air));
+        if (bredr_fec_decode_1_3(frame->air_payload,
+                                 input_air_bits,
+                                 decoded_air,
+                                 &decoded_air_bits) < 0)
+            return 0u;
+
+        return bredr_dewhiten_air_payload_bytes(decoded_air,
+                                                decoded_air_bits,
+                                                clk6,
+                                                18u,
+                                                dst,
+                                                dst_capacity);
+
+    case 0x06u:
+    case 0x0Cu:
+        input_air_bits -= input_air_bits % 15u;
+        if (input_air_bits == 0u)
+            return 0u;
+
+        memset(decoded_air, 0, sizeof(decoded_air));
+        if (bredr_fec_decode_2_3(frame->air_payload,
+                                 input_air_bits,
+                                 decoded_air,
+                                 &decoded_air_bits) < 0)
+            return 0u;
+
+        return bredr_dewhiten_air_payload_bytes(decoded_air,
+                                                decoded_air_bits,
+                                                clk6,
+                                                18u,
+                                                dst,
+                                                dst_capacity);
+
+    case 0x07u:
+    case 0x0Du:
+        return bredr_dewhiten_air_payload_bytes(frame->air_payload,
+                                                input_air_bits,
+                                                clk6,
+                                                18u,
+                                                dst,
+                                                dst_capacity);
+
+    default:
+        return 0u;
+    }
+}
+
 void bredr_decode_dewhitened_header(const uint8_t dewhitened_header[18],
                                     bredr_decoded_header_t *out)
 {
@@ -354,9 +451,9 @@ static int bredr_decode_header(const bredr_frame_t *frame,
  * in the high byte; bits are consumed in air order (LSB-first within each
  * byte of the packed buffer).
  */
-static uint16_t bredr_payload_crc(const uint8_t *data,
-                                  unsigned int bit_count,
-                                  uint8_t uap)
+uint16_t bredr_payload_crc(const uint8_t *data,
+                           unsigned int bit_count,
+                           uint8_t uap)
 {
     uint16_t reg = (uint16_t)((uint16_t)bredr_reverse_byte(uap) << 8);
 
@@ -448,6 +545,122 @@ static int bredr_parse_acl_payload(const uint8_t *payload,
     return 1;
 }
 
+static int bredr_parse_sync_payload(const uint8_t *payload,
+                                    unsigned int payload_len,
+                                    uint8_t type_code,
+                                    uint8_t uap,
+                                    bredr_sync_packet_t *out,
+                                    bredr_payload_family_t *family,
+                                    bredr_decode_limit_t *limit)
+{
+    unsigned int expected_bytes;
+    unsigned int ev_crc_search_limit = 0u;
+    unsigned int minimum_required_bytes;
+    bredr_payload_family_t resolved_family;
+
+    if (!payload || !out)
+    {
+        if (limit)
+            *limit = BREDR_DECODE_LIMIT_TRUNCATED_PAYLOAD;
+        return 0;
+    }
+
+    memset(out, 0, sizeof(*out));
+
+    switch (type_code & 0x0Fu)
+    {
+    case 0x0Cu:
+    case 0x0Du:
+        resolved_family = BREDR_PAYLOAD_FAMILY_ESCO;
+        break;
+    default:
+        resolved_family = BREDR_PAYLOAD_FAMILY_SCO;
+        break;
+    }
+    if (family)
+        *family = resolved_family;
+
+    switch (type_code & 0x0Fu)
+    {
+    case 0x05u:
+        expected_bytes = 10u;
+        break;
+    case 0x06u:
+        expected_bytes = 20u;
+        break;
+    case 0x07u:
+        expected_bytes = 30u;
+        ev_crc_search_limit = 32u;
+        break;
+    case 0x0Cu:
+        expected_bytes = 122u;
+        ev_crc_search_limit = expected_bytes;
+        break;
+    case 0x0Du:
+        expected_bytes = 182u;
+        ev_crc_search_limit = expected_bytes;
+        break;
+    default:
+        if (limit)
+            *limit = BREDR_DECODE_LIMIT_UNSUPPORTED_PACKET_TYPE;
+        return 0;
+    }
+
+    minimum_required_bytes = (ev_crc_search_limit != 0u) ? 3u : expected_bytes;
+
+    if (payload_len < minimum_required_bytes)
+    {
+        if (limit)
+            *limit = BREDR_DECODE_LIMIT_TRUNCATED_PAYLOAD;
+        return 0;
+    }
+
+    if (ev_crc_search_limit != 0u)
+    {
+        unsigned int search_limit = payload_len < ev_crc_search_limit ? payload_len : ev_crc_search_limit;
+
+        for (unsigned int total_bytes = 3u; total_bytes <= search_limit; total_bytes++)
+        {
+            uint16_t computed = bredr_payload_crc(payload, (total_bytes - 2u) * 8u, uap);
+            uint16_t received = (uint16_t)(payload[total_bytes - 2u] |
+                                ((uint16_t)payload[total_bytes - 1u] << 8u));
+            if (computed == received)
+            {
+                out->payload_bytes = (uint16_t)(total_bytes - 2u);
+                memcpy(out->payload, payload, out->payload_bytes);
+                out->has_crc = 1u;
+                out->crc = received;
+                out->crc_ok = 1u;
+                out->is_esco = (uint8_t)(resolved_family == BREDR_PAYLOAD_FAMILY_ESCO ||
+                                         (type_code & 0x0Fu) == 0x07u);
+                if (family)
+                    *family = BREDR_PAYLOAD_FAMILY_ESCO;
+                if (limit)
+                    *limit = BREDR_DECODE_LIMIT_NONE;
+                return 1;
+            }
+        }
+
+        if ((type_code & 0x0Fu) != 0x07u)
+        {
+            if (limit)
+                *limit = BREDR_DECODE_LIMIT_ESCO_CRC_UNRESOLVED;
+            return 0;
+        }
+    }
+
+    if (payload_len < expected_bytes)
+        expected_bytes = payload_len;
+
+    out->payload_bytes = (uint16_t)expected_bytes;
+    memcpy(out->payload, payload, expected_bytes);
+    out->is_esco = (uint8_t)(resolved_family == BREDR_PAYLOAD_FAMILY_ESCO);
+
+    if (limit)
+        *limit = BREDR_DECODE_LIMIT_NONE;
+    return 1;
+}
+
 int bredr_fec_decode_1_3(const uint8_t *input_bits,
                          unsigned int input_bit_count,
                          uint8_t *output_bits,
@@ -526,6 +739,65 @@ int bredr_fec_decode_2_3(const uint8_t *input_bits,
 
     *output_bit_count = decoded_bit_count;
     return error_count;
+}
+
+bredr_fec_mode_t bredr_fec_mode_for_type(uint8_t type_code)
+{
+    switch (type_code & 0x0Fu)
+    {
+    case 0x05u: // HV1
+        return BREDR_FEC_MODE_1_3;
+    case 0x03u: // DM1
+    case 0x06u: // HV2
+    case 0x0Au: // DM3
+    case 0x0Cu: // EV4
+    case 0x0Eu: // DM5
+        return BREDR_FEC_MODE_2_3;
+    default:
+        return BREDR_FEC_MODE_NONE;
+    }
+}
+
+int valid_fec_1_3_blocks(const uint8_t *input_bits,
+                         unsigned int input_bit_count)
+{
+    if (!input_bits || input_bit_count == 0u || (input_bit_count % 3u) != 0u)
+        return -1;
+
+    int valid_count = 0;
+
+    for (unsigned int out_bit = 0u; out_bit < input_bit_count / 3u; out_bit++)
+    {
+        unsigned int bit_base = out_bit * 3u;
+        unsigned int ones = (unsigned int)read_packed_bit(input_bits, bit_base)
+                          + (unsigned int)read_packed_bit(input_bits, bit_base + 1u)
+                          + (unsigned int)read_packed_bit(input_bits, bit_base + 2u);
+
+        if (ones == 0u || ones == 3u)
+            valid_count++;
+    }
+
+    return valid_count;
+}
+
+int valid_fec_2_3_blocks(const uint8_t *input_bits,
+                         unsigned int input_bit_count)
+{
+    if (!input_bits || input_bit_count == 0u || (input_bit_count % 15u) != 0u)
+        return -1;
+
+    int valid_count = 0;
+
+    for (unsigned int block = 0u; block < input_bit_count / 15u; block++)
+    {
+        unsigned int input_offset = block * 15u;
+        uint16_t codeword = (uint16_t)read_packed_field(input_bits, input_offset, 15u);
+
+        if (bredr_fec_2_3_remainder(codeword) == 0u)
+            valid_count++;
+    }
+
+    return valid_count;
 }
 
 uint8_t bredr_reverse_byte(uint8_t b)
@@ -688,6 +960,8 @@ const char *bredr_decode_limit_desc(bredr_decode_limit_t limit)
         return "ACL length impossible for packet type";
     case BREDR_DECODE_LIMIT_INVALID_ACL_HEADER:
         return "invalid ACL payload header";
+    case BREDR_DECODE_LIMIT_ESCO_CRC_UNRESOLVED:
+        return "no valid eSCO CRC-backed payload length found";
     default:
         return "unknown decode limit";
     }
@@ -768,6 +1042,33 @@ int bredr_decode_frame(const bredr_frame_t *frame,
             out->status = BREDR_DECODE_PARTIAL_PAYLOAD;
             return 1;
         }
+
+        out->status = BREDR_DECODE_FULL_PAYLOAD;
+        return 1;
+    }
+
+    if (out->family == BREDR_PAYLOAD_FAMILY_SCO ||
+        out->family == BREDR_PAYLOAD_FAMILY_ESCO)
+    {
+        out->decoded_payload_bytes = (uint16_t)bredr_decode_sync_payload_from_air(frame,
+                                              type_code,
+                                              clk1_6,
+                                              decoded_payload,
+                                              sizeof(decoded_payload));
+        if (!bredr_parse_sync_payload(decoded_payload,
+                                      out->decoded_payload_bytes,
+                                      type_code,
+                                      uap,
+                                      &out->payload.sync,
+                                      &out->family,
+                                      &out->limit))
+        {
+            out->status = BREDR_DECODE_PARTIAL_PAYLOAD;
+            return 1;
+        }
+
+        out->decoded_payload_bytes = (uint16_t)(out->payload.sync.payload_bytes +
+                                     (out->payload.sync.has_crc ? 2u : 0u));
 
         out->status = BREDR_DECODE_FULL_PAYLOAD;
         return 1;

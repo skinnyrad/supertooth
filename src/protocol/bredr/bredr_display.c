@@ -134,10 +134,14 @@ static void bredr_print_hex_line(const char *label,
     printf("\n");
 }
 
-static void bredr_print_decoded_payload(const bredr_packet_t *packet)
+static void bredr_print_decoded_payload(const bredr_packet_t *packet, const bredr_frame_t *frame)
 {
     if (!packet)
         return;
+
+    uint8_t type_code = packet->header.type & 0x0Fu;
+    unsigned int on_air_bits = bredr_on_air_payload_bits(packet->header.type);
+    bredr_fec_mode_t fec_mode = bredr_fec_mode_for_type(packet->header.type);
 
     printf("\n[Decoded Payload Info]\n");
     printf("Family       : %s\n", bredr_payload_family_name(packet->family));
@@ -162,6 +166,13 @@ static void bredr_print_decoded_payload(const bredr_packet_t *packet)
         }
         else
             printf("ACL Length   : %u bytes\n", acl->length);
+        if (fec_mode == BREDR_FEC_MODE_2_3 && frame && on_air_bits >= 15u)
+        {
+            int valid = valid_fec_2_3_blocks(frame->air_payload, on_air_bits);
+            printf("FEC   : 2/3 [%d Valid]\n", valid >= 0 ? valid : 0);
+        }
+        else
+            printf("FEC   : None\n");
         if (acl->has_mic)
             printf("ACL MIC      : 0x%08X [%s]\n", acl->mic, acl->mic_ok ? "PASS" : "FAIL");
         if (acl->has_crc)
@@ -173,10 +184,47 @@ static void bredr_print_decoded_payload(const bredr_packet_t *packet)
             bredr_print_hex_line("ACL Payload", acl->user_payload, acl->length, 24u);
         break;
     }
+    case BREDR_PAYLOAD_FAMILY_SCO:
+    case BREDR_PAYLOAD_FAMILY_ESCO:
+    {
+        const bredr_sync_packet_t *sync = &packet->payload.sync;
+        printf("Sync Length  : %u bytes\n", sync->payload_bytes);
+        if (sync->has_crc)
+            printf("Sync CRC     : 0x%04X [%s]\n",
+                   sync->crc,
+                   sync->crc_ok ? "PASS" : "FAIL");
+        else if (sync->is_esco)
+            printf("CRC          : [Fail] (not found, likely encrypted)\n");
+        if (frame && on_air_bits > 0u)
+        {
+            if (fec_mode == BREDR_FEC_MODE_1_3)
+            {
+                int valid = valid_fec_1_3_blocks(frame->air_payload, on_air_bits);
+                printf("FEC   : 1/3 [%d Valid]\n", valid >= 0 ? valid : 0);
+            }
+            else if (fec_mode == BREDR_FEC_MODE_2_3)
+            {
+                int valid = valid_fec_2_3_blocks(frame->air_payload, on_air_bits);
+                printf("FEC   : 2/3 [%d Valid]\n", valid >= 0 ? valid : 0);
+            }
+            else
+                printf("FEC   : None\n");
+        }
+        else
+            printf("FEC   : None\n");
+        if (packet->status == BREDR_DECODE_FULL_PAYLOAD)
+            bredr_print_hex_line(sync->is_esco ? "eSCO Payload" : "SCO Payload",
+                                 sync->payload,
+                                 sync->payload_bytes,
+                                 24u);
+        break;
+    }
     case BREDR_PAYLOAD_FAMILY_CONTROL:
         printf("Payload      : (none)\n");
+        printf("FEC   : None\n");
         break;
     default:
+        printf("FEC   : None\n");
         break;
     }
 
@@ -224,8 +272,11 @@ void bredr_print_packet_details(const bredr_frame_t *frame,
         {
             printf("\n[Decoded Header Info]\n");
             printf("HEC          : 0x%02X [PASS]\n", packet.header.hec);
-            printf("TYPE         : %u [%s]\n",
-                   packet.header.type & 0x0Fu, bredr_packet_type_name(packet.header.type));
+            if ((packet.header.type & 0x0Fu) == 0x07u && packet.family == BREDR_PAYLOAD_FAMILY_ESCO)
+                printf("TYPE         : %u [HV3/EV3]\n", packet.header.type & 0x0Fu);
+            else
+                printf("TYPE         : %u [%s]\n",
+                       packet.header.type & 0x0Fu, bredr_packet_type_name(packet.header.type));
             printf("LT_ADDR      : %u\n", packet.header.lt_addr & 0x07u);
             printf("FLOW         : %u\n", packet.header.flow & 1u);
             printf("ARQN         : %u\n", packet.header.arqn & 1u);
@@ -234,9 +285,9 @@ void bredr_print_packet_details(const bredr_frame_t *frame,
 
         semantic_payload_ready = (packet.status == BREDR_DECODE_FULL_PAYLOAD);
         if (packet.family == BREDR_PAYLOAD_FAMILY_ACL && packet.status == BREDR_DECODE_PARTIAL_PAYLOAD)
-            bredr_print_decoded_payload(&packet);
+            bredr_print_decoded_payload(&packet, frame);
         else if (semantic_payload_ready)
-            bredr_print_decoded_payload(&packet);
+            bredr_print_decoded_payload(&packet, frame);
 
         if (!semantic_payload_ready)
         {

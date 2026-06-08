@@ -16,6 +16,7 @@ extern "C" {
 
 #define BREDR_FHS_INFO_BYTES 18u
 #define BREDR_ACL_MAX_USER_PAYLOAD_BYTES 1021u
+#define BREDR_SYNC_MAX_PAYLOAD_BYTES 540u
 
 typedef enum
 {
@@ -38,6 +39,7 @@ typedef enum
     BREDR_DECODE_LIMIT_IMPOSSIBLE_ACL_LENGTH,
     BREDR_DECODE_LIMIT_INVALID_ACL_HEADER,
     BREDR_DECODE_LIMIT_FEC_UNCORRECTABLE,
+    BREDR_DECODE_LIMIT_ESCO_CRC_UNRESOLVED,
 } bredr_decode_limit_t;
 
 typedef enum
@@ -51,6 +53,13 @@ typedef enum
     BREDR_PAYLOAD_FAMILY_HYBRID,
     BREDR_PAYLOAD_FAMILY_UNKNOWN,
 } bredr_payload_family_t;
+
+typedef enum
+{
+    BREDR_FEC_MODE_NONE = 0,
+    BREDR_FEC_MODE_1_3,
+    BREDR_FEC_MODE_2_3,
+} bredr_fec_mode_t;
 
 typedef struct
 {
@@ -96,6 +105,10 @@ typedef struct
 typedef struct
 {
     uint16_t payload_bytes;
+    uint8_t payload[BREDR_SYNC_MAX_PAYLOAD_BYTES];
+    uint8_t has_crc;
+    uint16_t crc;
+    uint8_t crc_ok;
     uint8_t is_esco;
 } bredr_sync_packet_t;
 
@@ -116,6 +129,7 @@ typedef struct
     {
         bredr_fhs_payload_t fhs;
         bredr_acl_payload_t acl;
+        bredr_sync_packet_t sync;
         bredr_unknown_payload_t unknown;
     } payload;
 } bredr_packet_t;
@@ -157,6 +171,71 @@ int bredr_fec_decode_2_3(const uint8_t *input_bits,
                          unsigned int input_bit_count,
                          uint8_t *output_bits,
                          unsigned int *output_bit_count);
+
+/**
+ * @brief Compute the BR/EDR payload CRC-16 (BT Core Spec Vol 2, Part B, §7.1.1).
+ *
+ * The LFSR is initialised with the bit-reversed UAP in the high byte; bits
+ * are consumed in air order (LSB-first within each byte of @p data). The
+ * returned value is the 16-bit CRC with the low byte being the first CRC
+ * byte on air.
+ *
+ * @param data        Packed input bits (LSB-first within each byte).
+ * @param bit_count   Number of valid input bits.
+ * @param uap         8-bit Upper Address Part used to seed the register.
+ * @return            16-bit CRC.
+ */
+uint16_t bredr_payload_crc(const uint8_t *data,
+                           unsigned int bit_count,
+                           uint8_t uap);
+
+/**
+ * @brief Return the FEC mode used by the on-air payload of the given
+ *        BR/EDR packet type.
+ *
+ * 1/3 is used by HV1. 2/3 is used by DM1, DM3, DM5, HV2, and EV4. All
+ * other types return `BREDR_FEC_MODE_NONE`.
+ *
+ * @param type_code  Lower 4 bits are the BR/EDR type code (0x00..0x0F).
+ * @return           The FEC mode.
+ */
+bredr_fec_mode_t bredr_fec_mode_for_type(uint8_t type_code);
+
+/**
+ * @brief Count the number of 1/3 FEC blocks in @p input_bits that are valid.
+ *
+ * Each 3-bit block is considered valid iff all three bits are the same
+ * (i.e. 000 or 111). The input is processed in 3-bit groups packed
+ * LSB-first, exactly as the on-air bit buffer is laid out for
+ * `bredr_fec_decode_1_3()`.
+ *
+ * @param input_bits        Packed input bits (LSB-first within each byte).
+ * @param input_bit_count   Number of valid input bits; must be a non-zero
+ *                          multiple of 3.
+ * @return                  Number of valid 1/3 blocks, or -1 on invalid input.
+ */
+int valid_fec_1_3_blocks(const uint8_t *input_bits,
+                         unsigned int input_bit_count);
+
+/**
+ * @brief Count the number of 2/3 FEC codewords in @p input_bits that are valid.
+ *
+ * Each 15-bit `(15,10)` shortened Hamming codeword is considered valid iff
+ * its syndrome under the BT spec generator (effective polynomial 0x2B due
+ * to reciprocal bit ordering, see `bredr_fec_2_3_remainder`) is zero. The
+ * input is processed in 15-bit groups packed LSB-first, exactly as the
+ * on-air bit buffer is laid out for `bredr_fec_decode_2_3()`.
+ *
+ * A codeword that contains a single bit error is **not** valid by this
+ * definition: only the original (unmodified) transmitted codewords count.
+ *
+ * @param input_bits        Packed input bits (LSB-first within each byte).
+ * @param input_bit_count   Number of valid input bits; must be a non-zero
+ *                          multiple of 15.
+ * @return                  Number of valid 2/3 codewords, or -1 on invalid input.
+ */
+int valid_fec_2_3_blocks(const uint8_t *input_bits,
+                         unsigned int input_bit_count);
 
 /**
  * @brief Decode a dewhitened 18-bit BR/EDR header into structured fields.
