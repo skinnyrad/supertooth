@@ -4,22 +4,61 @@
 #include <unistd.h>
 #include <getopt.h>
 #include <inttypes.h>
-
 #include "app_common.h"
 #include "ble_display.h"
-#include "bredr_display.h"
 #include "ble_bitstream_decoder.h"
 #include "receiver_session.h"
 
 static unsigned long g_packet_count = 0;
 static int g_debug = 0;
+static uint8_t g_ble_channel = BLE_CH37_INDEX;
+static uint64_t g_ble_freq_hz = (uint64_t)BLE_CH37_FREQ_HZ;
 static receiver_session_t *g_session = NULL;
+
 static const app_output_mode_option_t s_output_modes[] = {
     {APP_OUTPUT_MODE_FULL, "full"},
     {APP_OUTPUT_MODE_SUMMARY, "summary"},
 };
 
 static app_output_mode_t g_output_mode = APP_OUTPUT_MODE_FULL;
+
+static int parse_ble_channel(const char *arg, uint8_t *out_channel, uint64_t *out_freq_hz)
+{
+    if (!arg || !out_channel || !out_freq_hz)
+        return -1;
+
+    char *endptr = NULL;
+    unsigned long ch = strtoul(arg, &endptr, 10);
+    if (*arg == '\0' || !endptr || *endptr != '\0')
+        return -1;
+
+    switch ((uint8_t)ch)
+    {
+    case BLE_CH37_INDEX:
+        *out_channel = BLE_CH37_INDEX;
+        *out_freq_hz = (uint64_t)BLE_CH37_FREQ_HZ;
+        return 0;
+    case BLE_CH38_INDEX:
+        *out_channel = BLE_CH38_INDEX;
+        *out_freq_hz = (uint64_t)BLE_CH38_FREQ_HZ;
+        return 0;
+    case BLE_CH39_INDEX:
+        *out_channel = BLE_CH39_INDEX;
+        *out_freq_hz = (uint64_t)BLE_CH39_FREQ_HZ;
+        return 0;
+    default:
+        return -1;
+    }
+}
+
+static void print_usage(const char *argv0)
+{
+    fprintf(stderr, "Usage: %s [-v|--view full|summary] [-b|--ble-channel 37|38|39] [-d|--debug]\n", argv0);
+    fprintf(stderr, "  %-30s Packet view style (default: full)\n", "-v, --view");
+    fprintf(stderr, "  %-30s BLE advertising channel (37, 38, or 39; default: 37)\n",
+            "-b, --ble-channel 37|38|39");
+    fprintf(stderr, "  %-30s Print drop/debug diagnostics\n", "-d, --debug");
+}
 
 static void print_ble_packet_full(unsigned long packet_no,
                                   const ble_event_t *event)
@@ -28,12 +67,14 @@ static void print_ble_packet_full(unsigned long packet_no,
     ble_packet_t packet;
     printf("\n------------------ Packet #%lu --------------------\n", packet_no);
     printf("[RX Info]\n");
-    printf("Sample Index : %" PRIu64 " (%u Msps master clock)\n",
-           meta->start_sample, RECEIVER_HYBRID_SAMPLE_RATE / 1000000u);
+        printf("Radio Sample : %" PRIu64 " (%u Msps input)\n",
+            meta->radio_start_sample_index,
+            (unsigned int)(meta->radio_sample_rate_hz / 1000000u));
     printf("Type         : BLE\n");
     printf("Frequency    : %u MHz (Channel %u)\n",
            (unsigned int)(meta->center_frequency_hz / 1000000u), meta->channel_index);
-    printf("RSSI         : %.2f dBr\n\n", meta->rssi_dbr);
+    printf("RSSI         : %.2f dBr\n", meta->rssi_dbr);
+    printf("\n");
     if (ble_decode_frame(&event->frame, meta->channel_index, &packet) == 0)
         ble_print_packet(&packet);
     else
@@ -61,55 +102,8 @@ static void print_ble_packet_summary(unsigned long packet_no,
            event->meta.rssi_dbr);
 }
 
-static void print_bredr_packet_full(unsigned long packet_no,
-                                    const bredr_event_t *event,
-                                    const receiver_bredr_piconet_snapshot_t *pnet)
-{
-    const bredr_frame_t *frame = &event->frame;
-    const rx_metadata_t *meta = &event->meta;
-    printf("\n------------------ Packet #%lu --------------------\n", packet_no);
-    printf("[RX Info]\n");
-    printf("Sample Index : %" PRIu64 " (%u Msps master clock)\n",
-           meta->start_sample, RECEIVER_HYBRID_SAMPLE_RATE / 1000000u);
-    printf("Type         : BR/EDR\n");
-    printf("Frequency    : %u MHz (Channel %u)\n",
-           (unsigned int)(meta->center_frequency_hz / 1000000u), meta->channel_index);
-    printf("RSSI         : %.2f dBr\n\n", meta->rssi_dbr);
-    bredr_print_packet_details(frame, pnet, meta, RECEIVER_HYBRID_SAMPLE_RATE);
-    printf("--------------------------------------------------\n");
-}
-
-static void print_bredr_packet_summary(unsigned long packet_no,
-                                       const bredr_event_t *event,
-                                       const receiver_bredr_piconet_snapshot_t *pnet)
-{
-    bredr_print_packet_summary_line(packet_no, &event->frame, pnet, &event->meta);
-}
-
-static void print_usage(const char *argv0)
-{
-    fprintf(stderr, "Usage: %s [-v|--view full|summary] [-d|--debug]\n", argv0);
-    fprintf(stderr, "  %-30s Packet view style (default: full)\n", "-v, --view");
-    fprintf(stderr, "  %-30s Print block-drop diagnostics\n", "-d, --debug");
-}
-
-static void handle_hybrid_bredr_packet(const bredr_event_t *event,
-                                       const receiver_bredr_piconet_snapshot_t *pnet,
-                                       void *user)
-{
-    (void)user;
-    app_output_lock();
-    unsigned long packet_no = ++g_packet_count;
-    if (g_output_mode == APP_OUTPUT_MODE_SUMMARY)
-        print_bredr_packet_summary(packet_no, event, pnet);
-    else
-        print_bredr_packet_full(packet_no, event, pnet);
-    fflush(stdout);
-    app_output_unlock();
-}
-
-static void handle_hybrid_ble_packet(const ble_event_t *event,
-                                     void *user)
+static void handle_ble_packet(const ble_event_t *event,
+                              void *user)
 {
     (void)user;
     app_output_lock();
@@ -122,17 +116,19 @@ static void handle_hybrid_ble_packet(const ble_event_t *event,
     app_output_unlock();
 }
 
+// --- Main --------------------------------------------------------------------
+
 int main(int argc, char *argv[])
 {
     static const struct option long_opts[] = {
         {"view", required_argument, NULL, 'v'},
+        {"ble-channel", required_argument, NULL, 'b'},
         {"debug", no_argument, NULL, 'd'},
         {"help", no_argument, NULL, 'h'},
         {0, 0, 0, 0}
     };
-
     int opt;
-    while ((opt = getopt_long(argc, argv, "v:dh", long_opts, NULL)) != -1)
+    while ((opt = getopt_long(argc, argv, "v:b:dh", long_opts, NULL)) != -1)
     {
         switch (opt)
         {
@@ -142,6 +138,14 @@ int main(int argc, char *argv[])
                                       &g_output_mode) != 0)
             {
                 fprintf(stderr, "Invalid view mode: %s\n", optarg);
+                print_usage(argv[0]);
+                return EXIT_FAILURE;
+            }
+            break;
+        case 'b':
+            if (parse_ble_channel(optarg, &g_ble_channel, &g_ble_freq_hz) != 0)
+            {
+                fprintf(stderr, "Invalid BLE channel: %s (expected 37, 38, or 39)\n", optarg);
                 print_usage(argv[0]);
                 return EXIT_FAILURE;
             }
@@ -158,49 +162,50 @@ int main(int argc, char *argv[])
         }
     }
 
-    printf("Supertooth Hybrid: BR/EDR ch0-%u + BLE ch%u\n",
-           RECEIVER_BREDR_MAX_CHANNELS - 1u, BLE_CH37_INDEX);
-    printf("LO: %.1f MHz, %u BR/EDR channels + 1 BLE channel, %u MHz bandwidth\n",
-           (double)RECEIVER_HYBRID_LO_FREQ_HZ / 1e6,
-           RECEIVER_BREDR_MAX_CHANNELS,
-           RECEIVER_HYBRID_SAMPLE_RATE / 1000000u);
+    printf("BLE Advertising Packet Detector\n");
+    printf("================================\n");
+    printf("Channel     : %u (%.3f MHz)\n", g_ble_channel, (double)g_ble_freq_hz / 1e6);
     printf("View mode   : %s\n",
            app_output_mode_name(g_output_mode, s_output_modes,
                                 sizeof(s_output_modes) / sizeof(s_output_modes[0])));
     printf("Debug       : %s\n", g_debug ? "enabled" : "disabled");
-    printf("Block pool  : %u blocks, per-channel queue: %u\n",
-           RECEIVER_BREDR_BLOCK_POOL_SIZE, RECEIVER_BREDR_CHANNEL_RING_SIZE);
-
     app_install_sigint_handler(&g_session);
 
-    receiver_hybrid_config_t config = {.debug = g_debug};
-    receiver_hybrid_callbacks_t callbacks = {
-        .on_bredr_packet = handle_hybrid_bredr_packet,
-        .on_ble_packet = handle_hybrid_ble_packet,
+    receiver_ble_config_t config = {
+        .ble_channel = g_ble_channel,
+        .lo_freq_hz = g_ble_freq_hz,
+        .debug = g_debug,
+    };
+    receiver_ble_callbacks_t callbacks = {
+        .on_packet = handle_ble_packet,
         .user = NULL,
     };
-    receiver_hybrid_stats_t stats;
     g_session = receiver_session_create();
     if (!g_session)
+    {
+        fprintf(stderr, "Failed to create receiver session.\n");
         return EXIT_FAILURE;
+    }
 
-    printf("Receiving... Press Ctrl+C to stop.\n");
-    int result = receiver_session_run_hybrid(g_session, &config, &callbacks, &stats);
+    printf("Monitoring BLE Channel %u (%.3f GHz) for advertising packets...\n",
+           g_ble_channel, (double)g_ble_freq_hz / 1e9);
+    printf("Press Ctrl+C to exit\n\n");
+        int result = receiver_session_run_ble(g_session, &config, &callbacks);
+    receiver_session_destroy(g_session);
+    g_session = NULL;
+    if (result != 0)
+    {
+        fprintf(stderr, "BLE receiver failed.\n");
+        return EXIT_FAILURE;
+    }
 
     printf("\n\n=== Session Summary ===\n");
     printf("  Output mode    : %s\n",
            app_output_mode_name(g_output_mode, s_output_modes,
                                 sizeof(s_output_modes) / sizeof(s_output_modes[0])));
     printf("  Debug mode     : %s\n", g_debug ? "enabled" : "disabled");
-    printf("  Total packets  : %lu\n", stats.total_packets);
-    if (g_debug)
-    {
-        printf("\n=== Debug Summary ===\n");
-        printf("  Dropped blocks : %lu\n",
-               receiver_session_dispatcher_dropped_blocks(g_session));
-    }
+    printf("  BLE channel    : %u (%.3f MHz)\n", g_ble_channel, (double)g_ble_freq_hz / 1e6);
+    printf("  Total packets  : %lu\n", g_packet_count);
 
-    receiver_session_destroy(g_session);
-    g_session = NULL;
-    return result == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    return 0;
 }

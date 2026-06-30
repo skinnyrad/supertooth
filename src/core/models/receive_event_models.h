@@ -26,8 +26,11 @@ typedef struct
     /** Distinguishes multiple radios, replay streams, or synthetic sources. */
     uint32_t source_id;
 
-    /** Stream-local sample index for ordering and correlation. */
-    uint64_t start_sample;
+    /** Radio-local sample index at the pre-channelization sample rate. */
+    uint64_t radio_start_sample_index;
+
+    /** Pre-channelization sample rate of the source radio in Hz. */
+    uint32_t radio_sample_rate_hz;
 
     /** Center frequency in Hz for tuning context and channel mapping. */
     uint32_t center_frequency_hz;
@@ -37,9 +40,6 @@ typedef struct
 
     /** Normalized receive power in dBr, computed by shared RSSI helpers. */
     float rssi_dbr;
-
-    /** Decoder/framer confidence on a 0-255 scale. */
-    uint8_t confidence;
 } rx_metadata_t;
 
 typedef struct

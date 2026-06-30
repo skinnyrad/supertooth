@@ -67,21 +67,20 @@ static void bredr_print_payload_preview(const bredr_frame_t *frame)
     printf("\n");
 }
 
-static uint32_t bredr_sample_to_rx_clk_1600(uint64_t start_sample,
-                                            unsigned int sample_rate_hz)
+static uint32_t bredr_sample_to_rx_clk_1600(uint64_t radio_start_sample_index,
+                                            unsigned int radio_sample_rate_hz)
 {
     uint64_t num;
 
-    if (sample_rate_hz == 0u)
+    if (radio_sample_rate_hz == 0u)
         return 0u;
 
-    num = start_sample * 1600u + (uint64_t)(sample_rate_hz / 2u);
-    return (uint32_t)(num / (uint64_t)sample_rate_hz);
+    num = radio_start_sample_index * 1600u + (uint64_t)(radio_sample_rate_hz / 2u);
+    return (uint32_t)(num / (uint64_t)radio_sample_rate_hz);
 }
 
 static int bredr_build_decode_inputs(const bredr_piconet_snapshot_t *pnet,
                                      const rx_metadata_t *meta,
-                                     unsigned int sample_rate_hz,
                                      uint8_t *uap_out,
                                      uint8_t *clk1_6_out)
 {
@@ -99,14 +98,15 @@ static int bredr_build_decode_inputs(const bredr_piconet_snapshot_t *pnet,
 
     if (pnet->uap_found)
         *uap_out = pnet->uap;
-    if (pnet->clk_known && meta && sample_rate_hz != 0u)
+    if (pnet->clk_known && meta && meta->radio_sample_rate_hz != 0u)
     {
-        rx_clk_1600 = bredr_sample_to_rx_clk_1600(meta->start_sample, sample_rate_hz);
+        rx_clk_1600 = bredr_sample_to_rx_clk_1600(meta->radio_start_sample_index,
+                                                  meta->radio_sample_rate_hz);
         delta = rx_clk_1600 - pnet->last_successful_rx_clk_1600;
         *clk1_6_out = (uint8_t)((pnet->central_clk_1_6 + delta) & 0x3Fu);
     }
 
-    return pnet->uap_found && pnet->clk_known && meta && sample_rate_hz != 0u;
+    return pnet->uap_found && pnet->clk_known && meta && meta->radio_sample_rate_hz != 0u;
 }
 
 static void bredr_print_hex_line(const char *label,
@@ -134,10 +134,14 @@ static void bredr_print_hex_line(const char *label,
     printf("\n");
 }
 
-static void bredr_print_decoded_payload(const bredr_packet_t *packet)
+static void bredr_print_decoded_payload(const bredr_packet_t *packet, const bredr_frame_t *frame)
 {
     if (!packet)
         return;
+
+    uint8_t type_code = packet->header.type & 0x0Fu;
+    unsigned int on_air_bits = bredr_on_air_payload_bits(packet->header.type);
+    bredr_fec_mode_t fec_mode = bredr_fec_mode_for_type(packet->header.type);
 
     printf("\n[Decoded Payload Info]\n");
     printf("Family       : %s\n", bredr_payload_family_name(packet->family));
@@ -162,6 +166,13 @@ static void bredr_print_decoded_payload(const bredr_packet_t *packet)
         }
         else
             printf("ACL Length   : %u bytes\n", acl->length);
+        if (fec_mode == BREDR_FEC_MODE_2_3 && frame && on_air_bits >= 15u)
+        {
+            int valid = valid_fec_2_3_blocks(frame->air_payload, on_air_bits);
+            printf("FEC          : 2/3 [%d Valid]\n", valid >= 0 ? valid : 0);
+        }
+        else
+            printf("FEC          : None\n");
         if (acl->has_mic)
             printf("ACL MIC      : 0x%08X [%s]\n", acl->mic, acl->mic_ok ? "PASS" : "FAIL");
         if (acl->has_crc)
@@ -173,10 +184,47 @@ static void bredr_print_decoded_payload(const bredr_packet_t *packet)
             bredr_print_hex_line("ACL Payload", acl->user_payload, acl->length, 24u);
         break;
     }
+    case BREDR_PAYLOAD_FAMILY_SCO:
+    case BREDR_PAYLOAD_FAMILY_ESCO:
+    {
+        const bredr_sync_packet_t *sync = &packet->payload.sync;
+        printf("Sync Length  : %u bytes\n", sync->payload_bytes);
+        if (sync->has_crc)
+            printf("Sync CRC     : 0x%04X [%s]\n",
+                   sync->crc,
+                   sync->crc_ok ? "PASS" : "FAIL");
+        else if (sync->is_esco)
+            printf("CRC          : [Fail] (not found, likely encrypted)\n");
+        if (frame && on_air_bits > 0u)
+        {
+            if (fec_mode == BREDR_FEC_MODE_1_3)
+            {
+                int valid = valid_fec_1_3_blocks(frame->air_payload, on_air_bits);
+                printf("FEC          : 1/3 [%d Valid]\n", valid >= 0 ? valid : 0);
+            }
+            else if (fec_mode == BREDR_FEC_MODE_2_3)
+            {
+                int valid = valid_fec_2_3_blocks(frame->air_payload, on_air_bits);
+                printf("FEC          : 2/3 [%d Valid]\n", valid >= 0 ? valid : 0);
+            }
+            else
+                printf("FEC          : None\n");
+        }
+        else
+            printf("FEC          : None\n");
+        if (packet->status == BREDR_DECODE_FULL_PAYLOAD)
+            bredr_print_hex_line(sync->is_esco ? "eSCO Payload" : "SCO Payload",
+                                 sync->payload,
+                                 sync->payload_bytes,
+                                 24u);
+        break;
+    }
     case BREDR_PAYLOAD_FAMILY_CONTROL:
         printf("Payload      : (none)\n");
+        printf("FEC          : None\n");
         break;
     default:
+        printf("FEC          : None\n");
         break;
     }
 
@@ -187,8 +235,7 @@ static void bredr_print_decoded_payload(const bredr_packet_t *packet)
 
 void bredr_print_packet_details(const bredr_frame_t *frame,
                                 const bredr_piconet_snapshot_t *pnet,
-                                const rx_metadata_t *meta,
-                                unsigned int sample_rate_hz)
+                                const rx_metadata_t *meta)
 {
     bredr_packet_t packet;
     uint8_t decode_uap;
@@ -207,7 +254,7 @@ void bredr_print_packet_details(const bredr_frame_t *frame,
         printf("HEADER       : (none — shortened access code)\n");
 
     memset(&packet, 0, sizeof(packet));
-    have_decode_inputs = bredr_build_decode_inputs(pnet, meta, sample_rate_hz, &decode_uap, &decode_clk1_6);
+    have_decode_inputs = bredr_build_decode_inputs(pnet, meta, &decode_uap, &decode_clk1_6);
     if (have_decode_inputs)
     {
         decode_ok = bredr_decode_frame(frame, decode_uap, decode_clk1_6, &packet);
@@ -225,8 +272,11 @@ void bredr_print_packet_details(const bredr_frame_t *frame,
         {
             printf("\n[Decoded Header Info]\n");
             printf("HEC          : 0x%02X [PASS]\n", packet.header.hec);
-            printf("TYPE         : %u [%s]\n",
-                   packet.header.type & 0x0Fu, bredr_packet_type_name(packet.header.type));
+            if ((packet.header.type & 0x0Fu) == 0x07u && packet.family == BREDR_PAYLOAD_FAMILY_ESCO)
+                printf("TYPE         : %u [HV3/EV3]\n", packet.header.type & 0x0Fu);
+            else
+                printf("TYPE         : %u [%s]\n",
+                       packet.header.type & 0x0Fu, bredr_packet_type_name(packet.header.type));
             printf("LT_ADDR      : %u\n", packet.header.lt_addr & 0x07u);
             printf("FLOW         : %u\n", packet.header.flow & 1u);
             printf("ARQN         : %u\n", packet.header.arqn & 1u);
@@ -235,9 +285,9 @@ void bredr_print_packet_details(const bredr_frame_t *frame,
 
         semantic_payload_ready = (packet.status == BREDR_DECODE_FULL_PAYLOAD);
         if (packet.family == BREDR_PAYLOAD_FAMILY_ACL && packet.status == BREDR_DECODE_PARTIAL_PAYLOAD)
-            bredr_print_decoded_payload(&packet);
+            bredr_print_decoded_payload(&packet, frame);
         else if (semantic_payload_ready)
-            bredr_print_decoded_payload(&packet);
+            bredr_print_decoded_payload(&packet, frame);
 
         if (!semantic_payload_ready)
         {
@@ -335,7 +385,7 @@ void bredr_print_rssi_snapshot(unsigned long packet_no,
 {
     printf("\n================ RSSI Snapshot (Packet #%lu) ================\n", packet_no);
     printf("Sample Index : %" PRIu64 " (%u Msps master clock)\n",
-           meta->start_sample, master_clock_mhz);
+           meta->radio_start_sample_index, master_clock_mhz);
     printf("Piconets     : %zu\n", count);
     printf("--------------------------------------------------------------\n");
 
