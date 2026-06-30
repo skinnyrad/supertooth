@@ -169,10 +169,10 @@ static void bredr_print_decoded_payload(const bredr_packet_t *packet, const bred
         if (fec_mode == BREDR_FEC_MODE_2_3 && frame && on_air_bits >= 15u)
         {
             int valid = valid_fec_2_3_blocks(frame->air_payload, on_air_bits);
-            printf("FEC   : 2/3 [%d Valid]\n", valid >= 0 ? valid : 0);
+            printf("FEC          : 2/3 [%d Valid]\n", valid >= 0 ? valid : 0);
         }
         else
-            printf("FEC   : None\n");
+            printf("FEC          : None\n");
         if (acl->has_mic)
             printf("ACL MIC      : 0x%08X [%s]\n", acl->mic, acl->mic_ok ? "PASS" : "FAIL");
         if (acl->has_crc)
@@ -200,18 +200,18 @@ static void bredr_print_decoded_payload(const bredr_packet_t *packet, const bred
             if (fec_mode == BREDR_FEC_MODE_1_3)
             {
                 int valid = valid_fec_1_3_blocks(frame->air_payload, on_air_bits);
-                printf("FEC   : 1/3 [%d Valid]\n", valid >= 0 ? valid : 0);
+                printf("FEC          : 1/3 [%d Valid]\n", valid >= 0 ? valid : 0);
             }
             else if (fec_mode == BREDR_FEC_MODE_2_3)
             {
                 int valid = valid_fec_2_3_blocks(frame->air_payload, on_air_bits);
-                printf("FEC   : 2/3 [%d Valid]\n", valid >= 0 ? valid : 0);
+                printf("FEC          : 2/3 [%d Valid]\n", valid >= 0 ? valid : 0);
             }
             else
-                printf("FEC   : None\n");
+                printf("FEC          : None\n");
         }
         else
-            printf("FEC   : None\n");
+            printf("FEC          : None\n");
         if (packet->status == BREDR_DECODE_FULL_PAYLOAD)
             bredr_print_hex_line(sync->is_esco ? "eSCO Payload" : "SCO Payload",
                                  sync->payload,
@@ -221,10 +221,10 @@ static void bredr_print_decoded_payload(const bredr_packet_t *packet, const bred
     }
     case BREDR_PAYLOAD_FAMILY_CONTROL:
         printf("Payload      : (none)\n");
-        printf("FEC   : None\n");
+        printf("FEC          : None\n");
         break;
     default:
-        printf("FEC   : None\n");
+        printf("FEC          : None\n");
         break;
     }
 
