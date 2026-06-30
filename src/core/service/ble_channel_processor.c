@@ -113,7 +113,7 @@ void receiver_ble_channel_processor_destroy(receiver_session_t *session)
 void receiver_ble_channel_processor_process(ble_channel_processor_t *ble,
                                            sample_block_t *blk)
 {
-    const float complex *samples = blk->samples;
+    float complex *samples = blk->samples;
     unsigned int sample_count = blk->num_samples;
     unsigned long long buf_start = blk->block_base_sample;
 

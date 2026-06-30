@@ -9,7 +9,7 @@ add_executable(test_fec_2_3
 )
 
 target_link_libraries(test_fec_2_3
-    supertooth_protocol_core
+    supertooth_core
 )
 
 add_test(NAME test_fec_2_3 COMMAND test_fec_2_3)
@@ -19,7 +19,7 @@ add_executable(test_crc
 )
 
 target_link_libraries(test_crc
-    supertooth_protocol_core
+    supertooth_core
 )
 
 add_test(NAME test_crc COMMAND test_crc)
